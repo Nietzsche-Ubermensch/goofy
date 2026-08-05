@@ -50,7 +50,13 @@ const IMAGE_SIZES: Record<string, string> = {
   '4K': '4096x4096',
 };
 
-export const normalizeImageSize = (size = '1024x1024'): string => IMAGE_SIZES[size] || size;
+export const normalizeImageSize = (provider: AIProvider, size = '1024x1024'): string => {
+  if (provider !== AIProvider.Venice && size in IMAGE_SIZES) {
+    return '1024x1024';
+  }
+
+  return IMAGE_SIZES[size] || size;
+};
 
 export const createImageGenerationPayload = (
   provider: AIProvider,
@@ -58,7 +64,7 @@ export const createImageGenerationPayload = (
 ): Record<string, string | number> => {
   const config = PROVIDER_CONFIGS[provider];
   const model = payload.model || config.defaultModel;
-  const size = normalizeImageSize(payload.size);
+  const size = normalizeImageSize(provider, payload.size);
 
   if (provider === AIProvider.Venice) {
     const [width, height] = size.split('x').map(Number);
