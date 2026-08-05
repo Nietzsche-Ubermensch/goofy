@@ -5,24 +5,9 @@ import cors from "cors";
 import dotenv from "dotenv";
 import axios from "axios";
 import { createServer as createViteServer } from "vite";
+import { getEffectiveKey, type AIProvider } from "./src/server/apiKeys";
 
 dotenv.config();
-
-function getEffectiveKey(provider: string, apiKey?: string): string | null {
-    // Use user-provided key if available
-    if (apiKey) return apiKey;
-    
-    // Otherwise use environment variables
-    const keyMap: Record<string, string | undefined> = {
-        'OpenRouter': process.env.OPENROUTER_API_KEY,
-        'Venice': process.env.VENICE_API_KEY,
-        'Gemini': process.env.GEMINI_API_KEY,
-        'OpenAI': process.env.OPENAI_API_KEY,
-        'xAI': process.env.XAI_API_KEY
-    };
-    
-    return keyMap[provider] || null;
-}
 
 async function startServer() {
   const app = express();
