@@ -1,2 +1,46 @@
 node_modules/
 dist/
+*.log
+.DS_Store
+Thumbs.db
+
+# Lock files - keep only package-lock.json
+bun.lock
+yarn.lock
+pnpm-lock.yaml
+
+# Build outputs
+build/
+out/
+.next/
+
+# Cache
+.cache/
+.turbo/
+
+# Environment
+.env
+.env.local
+.env*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Test/Debug/Temp files
+test-*.cjs
+test-*.js
+test-*.ts
+fix_*.cjs
+fix_*.js
+check-*.cjs
+screenshot.cjs
+screenshot.png
+prod_js.txt
+prod_index.html
+
+# Migration/History
+migrated_*
+prompt_history/

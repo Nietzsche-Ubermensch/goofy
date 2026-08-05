@@ -8,22 +8,20 @@ import { createServer as createViteServer } from "vite";
 
 dotenv.config();
 
-function getEffectiveKey(provider, apiKey) {
+function getEffectiveKey(provider: string, apiKey?: string): string | null {
+    // Use user-provided key if available
     if (apiKey) return apiKey;
-    let openRouterKey = process.env.OPENROUTER_API_KEY;
-    if (openRouterKey && openRouterKey.startsWith('OPENROUTER_API_KEY=')) {
-        openRouterKey = openRouterKey.replace('OPENROUTER_API_KEY=', '');
-    }
-    if (!openRouterKey || openRouterKey.includes('sk-or-v1-2c21429c87eaf347') || openRouterKey === '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') {
-        openRouterKey = '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';
-    }
-    let veniceKey = process.env.VENICE_API_KEY;
-    if (provider === 'OpenRouter') return openRouterKey;
-    if (provider === 'Venice') return veniceKey;
-    if (provider === 'Gemini') return process.env.GEMINI_API_KEY;
-    if (provider === 'OpenAI') return process.env.OPENAI_API_KEY;
-    if (provider === 'xAI') return process.env.XAI_API_KEY;
-    return null;
+    
+    // Otherwise use environment variables
+    const keyMap: Record<string, string | undefined> = {
+        'OpenRouter': process.env.OPENROUTER_API_KEY,
+        'Venice': process.env.VENICE_API_KEY,
+        'Gemini': process.env.GEMINI_API_KEY,
+        'OpenAI': process.env.OPENAI_API_KEY,
+        'xAI': process.env.XAI_API_KEY
+    };
+    
+    return keyMap[provider] || null;
 }
 
 async function startServer() {
