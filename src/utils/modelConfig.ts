@@ -50,6 +50,9 @@ const IMAGE_SIZES: Record<string, string> = {
   '4K': '4096x4096',
 };
 
+const VENICE_ASPECT_RATIO_MODELS = ['qwen-image-2', 'wan', 'flux-2'];
+const VENICE_RESOLUTION_MODELS = ['imagineart', 'gpt-image', 'nano-banana'];
+
 export const normalizeImageSize = (provider: AIProvider, size = '1024x1024'): string => {
   if (provider !== AIProvider.Venice && size in IMAGE_SIZES) {
     return '1024x1024';
@@ -67,6 +70,25 @@ export const createImageGenerationPayload = (
   const size = normalizeImageSize(provider, payload.size);
 
   if (provider === AIProvider.Venice) {
+    const normalizedModel = model.toLowerCase();
+
+    if (VENICE_ASPECT_RATIO_MODELS.some((modelName) => normalizedModel.includes(modelName))) {
+      return {
+        model,
+        prompt: payload.prompt,
+        aspect_ratio: '3:4',
+      };
+    }
+
+    if (VENICE_RESOLUTION_MODELS.some((modelName) => normalizedModel.includes(modelName))) {
+      return {
+        model,
+        prompt: payload.prompt,
+        resolution: payload.size || '1K',
+        aspect_ratio: '3:4',
+      };
+    }
+
     const [width, height] = size.split('x').map(Number);
     return {
       model,

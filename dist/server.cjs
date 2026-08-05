@@ -72,16 +72,11 @@ var IMAGE_SIZES = {
   "2K": "2048x2048",
   "4K": "4096x4096"
 };
-var normalizeImageSize = (provider, size = "1024x1024") => {
-  if (provider !== "Venice" /* Venice */ && size in IMAGE_SIZES) {
-    return "1024x1024";
-  }
-  return IMAGE_SIZES[size] || size;
-};
+var normalizeImageSize = (size = "1024x1024") => IMAGE_SIZES[size] || size;
 var createImageGenerationPayload = (provider, payload) => {
   const config = PROVIDER_CONFIGS[provider];
   const model = payload.model || config.defaultModel;
-  const size = normalizeImageSize(provider, payload.size);
+  const size = normalizeImageSize(payload.size);
   if (provider === "Venice" /* Venice */) {
     const [width, height] = size.split("x").map(Number);
     return {

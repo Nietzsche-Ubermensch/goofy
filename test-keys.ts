@@ -21,8 +21,7 @@ const providers = [
     payload: {
       model: 'flux-2-pro',
       prompt: 'A simple trading card illustration',
-      width: 1024,
-      height: 1024,
+      aspect_ratio: '3:4',
     },
   },
   {
