@@ -1,0 +1,6 @@
+{
+  "name": "Card Cropper, Descratcher & Enhancer",
+  "description": "Ultra-fast, zero-latency Card Cropper, Descratcher & Enhancer featuring custom WebGL fragment shaders, hybrid edge detection, Navier-Stokes inpainting, optimistic previews, and 2026 Liquid Glass UI.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,0 +1,40 @@
+{
+  "name": "cardcrop-ai-suite",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx server.ts",
+    "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
+    "start": "node dist/server.cjs",
+    "preview": "vite preview",
+    "lint": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@google/genai": "^1.33.0",
+    "axios": "^1.16.1",
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "esbuild": "^0.28.0",
+    "express": "^5.2.1",
+    "html2canvas": "^1.4.1",
+    "jimp": "^1.6.1",
+    "jszip": "3.10.1",
+    "lucide-react": "^0.560.0",
+    "motion": "^12.38.0",
+    "pngjs": "^7.0.0",
+    "puppeteer": "^25.5.0",
+    "react": "^19.2.3",
+    "react-dom": "^19.2.3",
+    "react-markdown": "^10.1.0",
+    "tsx": "^4.22.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.3.3",
+    "@types/node": "^22.14.0",
+    "@vitejs/plugin-react": "^5.0.0",
+    "tailwindcss": "^4.3.3",
+    "typescript": "~5.8.2",
+    "vite": "^6.2.0"
+  }
+}
