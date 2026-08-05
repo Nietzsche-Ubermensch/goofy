@@ -22,6 +22,24 @@ export default defineConfig(({ mode }) => {
         alias: {
           '@': path.resolve(__dirname, '.'),
         }
+      },
+      build: {
+        rollupOptions: {
+          output: {
+            manualChunks: {
+              // Vendor chunks
+              'react-vendor': ['react', 'react-dom'],
+              'markdown': ['react-markdown'],
+              'icons': ['lucide-react'],
+              'motion': ['motion'],
+              // AI services
+              'ai-services': ['@google/genai', 'axios'],
+              // Utility chunks
+              'image-utils': ['html2canvas', 'jszip', 'pngjs'],
+            }
+          }
+        },
+        chunkSizeWarningLimit: 600,
       }
     };
 });

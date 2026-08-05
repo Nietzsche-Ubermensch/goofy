@@ -5,26 +5,9 @@ import cors from "cors";
 import dotenv from "dotenv";
 import axios from "axios";
 import { createServer as createViteServer } from "vite";
+import { getEffectiveKey, type AIProvider } from "./src/server/apiKeys";
 
 dotenv.config();
-
-function getEffectiveKey(provider, apiKey) {
-    if (apiKey) return apiKey;
-    let openRouterKey = process.env.OPENROUTER_API_KEY;
-    if (openRouterKey && openRouterKey.startsWith('OPENROUTER_API_KEY=')) {
-        openRouterKey = openRouterKey.replace('OPENROUTER_API_KEY=', '');
-    }
-    if (!openRouterKey || openRouterKey.includes('sk-or-v1-2c21429c87eaf347') || openRouterKey === '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') {
-        openRouterKey = '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';
-    }
-    let veniceKey = process.env.VENICE_API_KEY;
-    if (provider === 'OpenRouter') return openRouterKey;
-    if (provider === 'Venice') return veniceKey;
-    if (provider === 'Gemini') return process.env.GEMINI_API_KEY;
-    if (provider === 'OpenAI') return process.env.OPENAI_API_KEY;
-    if (provider === 'xAI') return process.env.XAI_API_KEY;
-    return null;
-}
 
 async function startServer() {
   const app = express();

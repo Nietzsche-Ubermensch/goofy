@@ -115,6 +115,14 @@ export interface ProcessingSettings {
   backgroundColor: string;
   autoCrop: boolean;
   aiConfig: AIModelConfig;
+  // Manual WebGL Enhancement Controls
+  brightness: number;
+  contrast: number;
+  saturation: number;
+  vibrance: number;
+  sharpen: number;
+  descratchThreshold: number;
+  descratchRadius: number;
 }
 
 export interface ChatMessage {
