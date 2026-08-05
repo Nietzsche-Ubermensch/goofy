@@ -46,7 +46,6 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
                    <br/><br/>
                    Required specific environment variables:
                    <ul className="list-disc pl-4 mt-2">
-                      <li>GEMINI_API_KEY</li>
                       <li>OPENROUTER_API_KEY</li>
                       <li>VENICE_API_KEY</li>
                       <li>OPENAI_API_KEY</li>

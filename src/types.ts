@@ -93,7 +93,6 @@ export interface AnalysisResult {
 }
 
 export enum AIProvider {
-  Gemini = 'Gemini',
   OpenRouter = 'OpenRouter',
   Venice = 'Venice',
   OpenAI = 'OpenAI',
@@ -139,13 +138,4 @@ export interface CardImage {
   originalWidth: number;
   originalHeight: number;
   analysis?: AnalysisResult;
-}
-
-declare global {
-  interface Window {
-    aistudio?: {
-      hasSelectedApiKey: () => Promise<boolean>;
-      openSelectKey: () => Promise<void>;
-    };
-  }
 }

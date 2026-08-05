@@ -17,8 +17,8 @@ const ChatBot: React.FC = () => {
   const [inputText, setInputText] = useState('');
   const [isTyping, setIsTyping] = useState(false);
   const [aiConfig, setAiConfig] = useState<AIModelConfig>({
-    provider: AIProvider.Gemini,
-    modelId: 'gemini-3.1-flash-lite'
+    provider: AIProvider.OpenRouter,
+    modelId: 'anthropic/claude-3.5-sonnet'
   });
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -32,51 +32,6 @@ const ChatBot: React.FC = () => {
 
   const handleSend = async () => {
     if (!inputText.trim()) return;
-
-    if (aiConfig.provider === AIProvider.Gemini) {
-        if (typeof window !== 'undefined' && window.aistudio) {
-            const hasKey = await window.aistudio.hasSelectedApiKey();
-            if (!hasKey) {
-                setMessages(prev => [...prev, {
-                    id: Date.now().toString(),
-                    role: 'model',
-                    text: 'SYSTEM ALERT: Gemini API Key not selected. Please configure it in the global Settings modal.',
-                    timestamp: new Date()
-                }]);
-                return;
-            }
-        } else {
-            const geminiKey = typeof window !== 'undefined' ? localStorage.getItem('CUSTOM_GEMINI_KEY') : null;
-            if (!geminiKey) {
-               setMessages(prev => [...prev, {
-                    id: Date.now().toString(),
-                    role: 'model',
-                    text: 'SYSTEM ALERT: Gemini API Key is missing. Please configure it in the global Settings modal.',
-                    timestamp: new Date()
-                }]);
-                return;
-            }
-        }
-    } else {
-        const keyMap = {
-            [AIProvider.OpenRouter]: 'CUSTOM_OPENROUTER_KEY',
-            [AIProvider.Venice]: 'CUSTOM_VENICE_KEY',
-            [AIProvider.OpenAI]: 'CUSTOM_OPENAI_KEY',
-            [AIProvider.xAI]: 'CUSTOM_XAI_KEY'
-        };
-        const storageKey = keyMap[aiConfig.provider as keyof typeof keyMap];
-        const hasCustomKey = storageKey && typeof window !== 'undefined' && localStorage.getItem(storageKey);
-        
-        if (!hasCustomKey) {
-            setMessages(prev => [...prev, {
-                id: Date.now().toString(),
-                role: 'model',
-                text: `SYSTEM ALERT: ${aiConfig.provider} API Key is missing. Please enter it in the global Settings modal.`,
-                timestamp: new Date()
-            }]);
-            return;
-        }
-    }
 
     const userMsg: ChatMessage = {
       id: Date.now().toString(),
@@ -150,7 +105,7 @@ const ChatBot: React.FC = () => {
                     value={aiConfig.provider}
                     onChange={(e) => {
                         const provider = e.target.value as AIProvider;
-                        let modelId = 'gemini-3.1-pro-preview';
+                        let modelId = 'anthropic/claude-3.5-sonnet';
                         if (provider === AIProvider.OpenRouter) modelId = 'anthropic/claude-3.5-sonnet';
                         if (provider === AIProvider.Venice) modelId = 'llama-3.3-70b';
                         if (provider === AIProvider.OpenAI) modelId = 'gpt-4o';
@@ -159,7 +114,6 @@ const ChatBot: React.FC = () => {
                     }}
                     className="bg-transparent text-[10px] text-[rgba(0,243,255,0.7)] font-medium uppercase border-none focus:ring-0 p-0 cursor-pointer hover:text-[#00f3ff] transition-colors font-mono"
                 >
-                    <option value={AIProvider.Gemini}>Gemini</option>
                     <option value={AIProvider.OpenRouter}>OpenRouter</option>
                     <option value={AIProvider.Venice}>Venice</option>
                     <option value={AIProvider.OpenAI}>OpenAI</option>
@@ -171,16 +125,10 @@ const ChatBot: React.FC = () => {
                     onChange={(e) => setAiConfig({ ...aiConfig, modelId: e.target.value })}
                     className="bg-transparent text-[10px] text-[rgba(0,243,255,0.7)] font-medium uppercase border-none focus:ring-0 p-0 cursor-pointer hover:text-[#00f3ff] transition-colors font-mono"
                 >
-                    {aiConfig.provider === AIProvider.Gemini && (
-                        <>
-                            <option value="gemini-3.1-pro-preview">3.1 Pro</option>
-                            <option value="gemini-2.0-flash">2.0 Flash</option>
-                        </>
-                    )}
                     {aiConfig.provider === AIProvider.OpenRouter && (
                         <>
                             <option value="anthropic/claude-3.5-sonnet">Claude 3.5 Sonnet</option>
-                            <option value="google/gemini-2.0-flash-001">Gemini 2.0 Flash</option>
+                            <option value="meta-llama/llama-3.3-70b-instruct:free">Llama 3.3 70B</option>
                         </>
                     )}
                     {aiConfig.provider === AIProvider.OpenAI && (

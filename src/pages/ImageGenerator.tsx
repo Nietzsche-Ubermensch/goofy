@@ -11,8 +11,8 @@ const ImageGenerator: React.FC = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [aiConfig, setAiConfig] = useState<AIModelConfig>({
-    provider: AIProvider.Gemini,
-    modelId: 'gemini-3-pro-image-preview'
+    provider: AIProvider.Venice,
+    modelId: 'flux-2-pro'
   });
   
   const cardRef = useRef<HTMLDivElement>(null);
@@ -29,38 +29,6 @@ const ImageGenerator: React.FC = () => {
 
   const handleGenerate = async () => {
     if (!prompt.trim()) return;
-    
-    // ... (rest of the handleGenerate function)
-
-    if (aiConfig.provider === AIProvider.Gemini) {
-        if (typeof window !== 'undefined' && window.aistudio) {
-            const hasKey = await window.aistudio.hasSelectedApiKey();
-            if (!hasKey) {
-                setError('Gemini API Key not selected. Please click UPDATE_API_KEY to configure it.');
-                return;
-            }
-        } else {
-            const geminiKey = typeof window !== 'undefined' ? localStorage.getItem('CUSTOM_GEMINI_KEY') : null;
-            if (!geminiKey) {
-                setError(`Gemini API Key is missing. Please configure it in the global Settings modal.`);
-                return;
-            }
-        }
-    } else {
-        const keyMap = {
-            [AIProvider.OpenRouter]: 'CUSTOM_OPENROUTER_KEY',
-            [AIProvider.Venice]: 'CUSTOM_VENICE_KEY',
-            [AIProvider.OpenAI]: 'CUSTOM_OPENAI_KEY',
-            [AIProvider.xAI]: 'CUSTOM_XAI_KEY'
-        };
-        const storageKey = keyMap[aiConfig.provider as keyof typeof keyMap];
-        const hasCustomKey = storageKey && typeof window !== 'undefined' && localStorage.getItem(storageKey);
-        
-        if (!hasCustomKey) {
-            setError(`${aiConfig.provider} API Key is missing. Please enter it in the global Settings modal.`);
-            return;
-        }
-    }
 
     setIsLoading(true);
     setError(null);
@@ -76,17 +44,6 @@ const ImageGenerator: React.FC = () => {
     }
   };
 
-  const selectKey = async () => {
-    try {
-        if(window.aistudio) {
-            await window.aistudio.openSelectKey();
-        }
-    } catch(e) {
-        console.error(e);
-        setError("Could not open key selection dialog.");
-    }
-  }
-
   return (
     <div className="h-full bg-transparent p-6 md:p-12 overflow-y-auto holo-text">
       <div className="max-w-5xl mx-auto grid grid-cols-1 lg:grid-cols-2 gap-8 h-full">
@@ -99,7 +56,7 @@ const ImageGenerator: React.FC = () => {
                     <span>GEN_ENGINE_V3</span>
                 </h2>
                 <p className="text-[rgba(0,243,255,0.6)] font-mono text-sm">
-                    Latent space generation for sports card assets via Gemini Nano Banana Pro.
+                    Image generation for sports card assets via supported provider APIs.
                 </p>
             </div>
 
@@ -111,16 +68,14 @@ const ImageGenerator: React.FC = () => {
                          value={aiConfig.provider}
                          onChange={(e) => {
                              const provider = e.target.value as AIProvider;
-                             let modelId = 'gemini-3.1-flash-image-preview';
-                             if (provider === AIProvider.OpenRouter) modelId = 'google/gemini-2.0-flash-001';
+                             let modelId = 'openai/gpt-image-1';
                              if (provider === AIProvider.Venice) modelId = 'flux-2-pro';
                              if (provider === AIProvider.OpenAI) modelId = 'dall-e-3';
-                             if (provider === AIProvider.xAI) modelId = 'grok-vision-beta';
+                             if (provider === AIProvider.xAI) modelId = 'gpt-image-1.5';
                              setAiConfig({ provider, modelId });
                          }}
                          className="bg-black/60 border border-[rgba(0,243,255,0.3)] rounded-sm p-2 text-[10px] text-[#00f3ff] font-mono outline-none focus:border-[#00f3ff] holo-border"
                        >
-                           <option value={AIProvider.Gemini}>Gemini</option>
                            <option value={AIProvider.OpenRouter}>OpenRouter</option>
                            <option value={AIProvider.Venice}>Venice</option>
                            <option value={AIProvider.OpenAI}>OpenAI</option>
@@ -131,15 +86,9 @@ const ImageGenerator: React.FC = () => {
                          onChange={(e) => setAiConfig({ ...aiConfig, modelId: e.target.value })}
                          className="bg-black/60 border border-[rgba(0,243,255,0.3)] rounded-sm p-2 text-[10px] text-[#00f3ff] font-mono outline-none focus:border-[#00f3ff] holo-border"
                        >
-                           {aiConfig.provider === AIProvider.Gemini && (
-                               <>
-                                   <option value="gemini-3.1-flash-image-preview">3.1 Flash</option>
-                                   <option value="gemini-2.0-flash">2.0 Flash</option>
-                               </>
-                           )}
                            {aiConfig.provider === AIProvider.OpenRouter && (
                                <>
-                                   <option value="google/gemini-2.0-flash-001">Gemini 2.0</option>
+                                   <option value="openai/gpt-image-1">GPT Image 1</option>
                                </>
                            )}
                            {aiConfig.provider === AIProvider.OpenAI && (
@@ -150,7 +99,7 @@ const ImageGenerator: React.FC = () => {
                            )}
                            {aiConfig.provider === AIProvider.xAI && (
                                <>
-                                   <option value="grok-vision-beta">Grok Vision</option>
+                                   <option value="gpt-image-1.5">Grok Imagine</option>
                                </>
                            )}
                            {aiConfig.provider === AIProvider.Venice && (
@@ -220,9 +169,7 @@ const ImageGenerator: React.FC = () => {
                         <div className="w-2 h-2 bg-[#00f3ff] rounded-full animate-pulse shadow-[0_0_5px_rgba(0,243,255,0.8)]"></div>
                         SYSTEM READY
                     </div>
-                    <button onClick={selectKey} className="text-[10px] text-[rgba(255,0,229,0.9)] hover:text-[#ff00e5] hover:underline font-mono holo-text">
-                        SYS_CONFIG
-                    </button>
+                    <span className="text-[10px] text-[rgba(0,243,255,0.5)] font-mono">CONFIGURE KEYS IN .ENV</span>
                 </div>
             </div>
             

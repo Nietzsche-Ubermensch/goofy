@@ -1,4 +1,3 @@
-import { GoogleGenAI, Type } from "@google/genai";
 import axios from "axios";
 import { 
   ImageSize, 
@@ -7,15 +6,7 @@ import {
   AIProvider, 
   AIModelConfig 
 } from "../types";
-
-// Helper to get the AI client for Gemini
-const getGeminiClient = async (useUserSelectedKey: boolean = false) => {
-  let apiKey = process.env.GEMINI_API_KEY || process.env.API_KEY || '';
-  if (!apiKey && typeof window !== 'undefined') {
-    apiKey = localStorage.getItem('CUSTOM_GEMINI_KEY') || '';
-  }
-  return new GoogleGenAI({ apiKey });
-};
+import { PROVIDER_CONFIGS } from '../utils/modelConfig';
 
 const fileToBase64 = async (file: File): Promise<string> => {
   return new Promise((resolve, reject) => {
@@ -143,7 +134,6 @@ export const cropImage = async (file: File, box: number[]): Promise<string> => {
 
 const getApiKeyForProvider = (provider: AIProvider): string | null => {
   const keyMap = {
-      [AIProvider.Gemini]: 'CUSTOM_GEMINI_KEY',
       [AIProvider.OpenRouter]: 'CUSTOM_OPENROUTER_KEY',
       [AIProvider.Venice]: 'CUSTOM_VENICE_KEY',
       [AIProvider.OpenAI]: 'CUSTOM_OPENAI_KEY',
@@ -215,48 +205,33 @@ export const generateBotResponse = async (
     newMessage: string,
     config?: AIModelConfig
 ): Promise<string> => {
-  const provider = config?.provider || AIProvider.Gemini;
-  const primaryModel = config?.modelId || 'gemini-3.1-flash-lite';
-  let fallbackModel = 'gemini-1.5-pro';
-  if (provider === AIProvider.OpenRouter) fallbackModel = 'google/gemini-2.0-flash-001';
-  if (provider === AIProvider.Venice) fallbackModel = 'llama-3.2-3b';
+  const provider = config?.provider || AIProvider.OpenRouter;
+  const primaryModel = config?.modelId || 'anthropic/claude-3.5-sonnet';
+  const fallbackModels: Record<AIProvider, string> = {
+    [AIProvider.OpenRouter]: 'meta-llama/llama-3.3-70b-instruct:free',
+    [AIProvider.Venice]: 'llama-3.2-3b',
+    [AIProvider.OpenAI]: 'gpt-4o-mini',
+    [AIProvider.xAI]: 'grok-3-mini',
+  };
+  const fallbackModel = fallbackModels[provider];
   
   return executeWithFallback(provider, primaryModel, fallbackModel, async (modelId) => {
-    if (provider === AIProvider.Gemini) {
-      try {
-        const ai = await getGeminiClient();
-        const chat = ai.chats.create({
-          model: modelId,
-          history: history,
-          config: {
-            systemInstruction: "You are 'Lumina', an advanced AI assistant for Sports Card restoration. You are concise, professional, and knowledgeable about card grading (PSA/BGS), surface damage, and value.",
-          }
-        });
-        const result = await chat.sendMessage({ message: newMessage });
-        return result.text || "I couldn't generate a response.";
-      } catch (error) {
-        console.error("Gemini Chat Error:", error);
-        throw new Error(extractAIErrorMessage(error, AIProvider.Gemini));
-      }
-    } else {
-      // OpenRouter or Venice
-      try {
-        const messages = [
-          { role: 'system', content: "You are 'Lumina', an advanced AI assistant for Sports Card restoration. You are concise, professional, and knowledgeable about card grading (PSA/BGS), surface damage, and value." },
-          ...history.map(h => ({ role: h.role === 'model' ? 'assistant' : 'user', content: h.parts[0].text })),
-          { role: 'user', content: newMessage }
-        ];
-        const response = await axios.post("/api/ai/chat", {
-          provider,
-          modelId,
-          messages,
-          apiKey: getApiKeyForProvider(provider)
-        });
-        return response.data.choices[0].message.content;
-      } catch (error: any) {
-        console.error(`${provider} Chat Error:`, error.response?.data || error.message);
-        throw new Error(extractAIErrorMessage(error, provider));
-      }
+    try {
+      const messages = [
+        { role: 'system', content: "You are 'Lumina', an advanced AI assistant for Sports Card restoration. You are concise, professional, and knowledgeable about card grading (PSA/BGS), surface damage, and value." },
+        ...history.map(h => ({ role: h.role === 'model' ? 'assistant' : 'user', content: h.parts[0].text })),
+        { role: 'user', content: newMessage }
+      ];
+      const response = await axios.post("/api/ai/chat", {
+        provider,
+        modelId,
+        messages,
+        apiKey: getApiKeyForProvider(provider)
+      });
+      return response.data.choices[0].message.content;
+    } catch (error: any) {
+      console.error(`${provider} Chat Error:`, error.response?.data || error.message);
+      throw new Error(extractAIErrorMessage(error, provider));
     }
   });
 };
@@ -267,29 +242,10 @@ export const streamBotResponse = async (
     onChunk: (text: string) => void,
     config?: AIModelConfig
 ): Promise<void> => {
-  const provider = config?.provider || AIProvider.Gemini;
-  const modelId = config?.modelId || 'gemini-3.1-flash-lite';
-  
-  if (provider === AIProvider.Gemini) {
-      try {
-        const ai = await getGeminiClient();
-        const chat = ai.chats.create({
-          model: modelId,
-          history: history,
-          config: {
-            systemInstruction: "You are 'Lumina', an advanced AI assistant for Sports Card restoration. You are concise, professional, and knowledgeable about card grading (PSA/BGS), surface damage, and value.",
-          }
-        });
-        const resultStream = await chat.sendMessageStream({ message: newMessage });
-        for await (const chunk of resultStream) {
-           onChunk(chunk.text || "");
-        }
-      } catch (error) {
-        console.error("Gemini stream error:", error);
-        throw new Error(extractAIErrorMessage(error, AIProvider.Gemini));
-      }
-  } else {
-      try {
+  const provider = config?.provider || AIProvider.OpenRouter;
+  const modelId = config?.modelId || 'anthropic/claude-3.5-sonnet';
+
+  try {
         const messages = [
           { role: 'system', content: "You are 'Lumina', an advanced AI assistant for Sports Card restoration. You are concise, professional, and knowledgeable about card grading (PSA/BGS), surface damage, and value." },
           ...history.map(h => ({ role: h.role === 'model' ? 'assistant' : 'user', content: h.parts[0].text })),
@@ -343,20 +299,17 @@ export const streamBotResponse = async (
                 }
             }
         }
-      } catch (error) {
-         console.error(`${provider} stream error:`, error);
-         throw new Error(extractAIErrorMessage(error, provider));
-      }
+  } catch (error) {
+    console.error(`${provider} stream error:`, error);
+    throw new Error(extractAIErrorMessage(error, provider));
   }
 };
 
 export const generateCardImage = async (prompt: string, size: ImageSize, config?: AIModelConfig): Promise<string> => {
-  const provider = config?.provider || AIProvider.Gemini;
+  const provider = config?.provider || AIProvider.Venice;
   
   let optimizedPrompt = prompt;
-  if (provider === AIProvider.Gemini) {
-      optimizedPrompt = `Highly detailed, 8k resolution, cinematic lighting, trading card asset, masterwork quality, ${prompt}`;
-  } else if (provider === AIProvider.OpenAI) {
+  if (provider === AIProvider.OpenAI) {
       optimizedPrompt = `Generate a photorealistic and highly detailed trading card asset. Concept: ${prompt}. Cinematic lighting, extreme focus, 8k rendering.`;
   } else if (provider === AIProvider.Venice) {
       optimizedPrompt = `masterpiece, best quality, highly detailed trading card, ${prompt}, vibrant colors, sharp focus, volumetric lighting`;
@@ -365,66 +318,49 @@ export const generateCardImage = async (prompt: string, size: ImageSize, config?
   } else if (provider === AIProvider.xAI) {
       optimizedPrompt = `High resolution, crisp, beautifully lit trading card art. Prompt: ${prompt}. Photorealistic, vibrant, stunning details.`;
   }
-  const primaryModel = config?.modelId || 'gemini-3-pro-image-preview';
-  let fallbackModel = 'gemini-1.5-flash';
-  if (provider === AIProvider.OpenRouter) fallbackModel = 'google/gemini-2.0-flash-001';
-  if (provider === AIProvider.Venice) fallbackModel = 'flux-2-pro';
+  const primaryModel = config?.modelId || PROVIDER_CONFIGS[provider].defaultModel;
+  const fallbackModel = PROVIDER_CONFIGS[provider].defaultModel;
 
   return executeWithFallback(provider, primaryModel, fallbackModel, async (modelId) => {
-    if (provider === AIProvider.Gemini) {
-      try {
-        const ai = await getGeminiClient(true);
-        const response = await ai.models.generateImages({
-          model: modelId,
-          prompt: optimizedPrompt,
-          config: {
-             outputMimeType: 'image/png',
-             aspectRatio: '3:4',
-             imageSize: size as any
-          }
-        });
+    try {
+      const response = await axios.post("/api/images/generations", {
+        provider,
+        model: modelId,
+        prompt: optimizedPrompt,
+        size,
+        response_format: 'b64_json',
+        apiKey: getApiKeyForProvider(provider),
+      });
+      const image = response.data.data?.[0] || response.data.images?.[0];
+      const imageValue = image?.b64_json || image?.url || response.data.image_url;
 
-        if (response.generatedImages && response.generatedImages.length > 0) {
-           return `data:image/png;base64,${response.generatedImages[0].image.imageBytes}`;
-        }
-        throw new Error("No image data received from the model.");
-      } catch (error) {
-        console.error("Image Generation Error:", error);
-        throw new Error(extractAIErrorMessage(error, AIProvider.Gemini));
+      if (!imageValue) {
+        throw new Error("No image data received from the image endpoint.");
       }
-    } else {
-      try {
-        const response = await axios.post("/api/ai/generate-image", {
-          provider,
-          modelId,
-          prompt: optimizedPrompt,
-          size,
-          apiKey: getApiKeyForProvider(provider)
-        });
-        
-        if (provider === AIProvider.Venice) {
-            const imgData = response.data.images[0];
-            if (imgData.url.startsWith('data:')) return imgData.url;
-            return `data:image/png;base64,${imgData.url}`;
-        } else if (provider === AIProvider.OpenAI || provider === AIProvider.xAI) {
-             return `data:image/png;base64,${response.data.data[0].b64_json}`;
-        }
-        return response.data.image_url || response.data.images?.[0]?.url || "";
-      } catch (error: any) {
-        console.error(`${provider} Image Error:`, error.response?.data || error.message);
-        throw new Error(extractAIErrorMessage(error, provider));
+
+      if (imageValue.startsWith('data:') || imageValue.startsWith('http')) {
+        return imageValue;
       }
+
+      return `data:image/png;base64,${imageValue}`;
+    } catch (error: any) {
+      console.error(`${provider} Image Error:`, error.response?.data || error.message);
+      throw new Error(extractAIErrorMessage(error, provider));
     }
   });
 };
 
 export const analyzeCardDamage = async (file: File, config?: AIModelConfig): Promise<AnalysisResult> => {
-    const provider = config?.provider || AIProvider.Gemini;
+    const provider = config?.provider || AIProvider.Venice;
     const base64 = await fileToBase64(file);
-    const primaryModel = config?.modelId || 'gemini-3.1-pro-preview';
-    let fallbackModel = 'gemini-1.5-flash';
-    if (provider === AIProvider.OpenRouter) fallbackModel = 'google/gemini-2.0-flash-001';
-    if (provider === AIProvider.Venice) fallbackModel = 'llama-3.2-11b-vision';
+    const primaryModel = config?.modelId || 'llama-3.2-90b-vision';
+    const fallbackModels: Record<AIProvider, string> = {
+      [AIProvider.OpenRouter]: 'meta-llama/llama-3.2-11b-vision-instruct',
+      [AIProvider.Venice]: 'llama-3.2-90b-vision',
+      [AIProvider.OpenAI]: 'gpt-4o-mini',
+      [AIProvider.xAI]: 'grok-2-vision-1212',
+    };
+    const fallbackModel = fallbackModels[provider];
 
     const promptText = `Analyze this sports card image.
 1. Detect the main bounding box of the card exactly [ymin, xmin, ymax, xmax] as floats between 0.0 and 1.0.
@@ -434,56 +370,7 @@ export const analyzeCardDamage = async (file: File, config?: AIModelConfig): Pro
 Return JSON matching the schema.`;
 
     return executeWithFallback(provider, primaryModel, fallbackModel, async (modelId) => {
-        if (provider === AIProvider.Gemini) {
-            try {
-                const ai = await getGeminiClient(true);
-                const response = await ai.models.generateContent({
-                    model: modelId,
-                    contents: {
-                        parts: [
-                            { inlineData: { mimeType: file.type, data: base64 } },
-                            { text: promptText }
-                        ]
-                    },
-                    config: {
-                        responseMimeType: "application/json",
-                        responseSchema: {
-                            type: Type.OBJECT,
-                            properties: {
-                                damageScore: { type: Type.NUMBER },
-                                issues: { type: Type.ARRAY, items: { type: Type.STRING } },
-                                detailedIssues: {
-                                    type: Type.ARRAY,
-                                    items: {
-                                        type: Type.OBJECT,
-                                        properties: {
-                                            type: { type: Type.STRING, description: "Type of damage (e.g., Scratch, Corner Wear)" },
-                                            description: { type: Type.STRING, description: "Brief description of the issue" },
-                                            severity: { type: Type.NUMBER, description: "Severity score 0-100" },
-                                            boundingBox: { type: Type.ARRAY, items: { type: Type.NUMBER }, description: "ymin, xmin, ymax, xmax relative to image" }
-                                        }
-                                    }
-                                },
-                                recommendedFixes: { type: Type.ARRAY, items: { type: Type.STRING } },
-                                boundingBox: { type: Type.ARRAY, items: { type: Type.NUMBER }, description: "Main card bounding box: ymin, xmin, ymax, xmax" }
-                            }
-                        }
-                    }
-                });
-                
-                if (response.text) {
-                    return JSON.parse(response.text);
-                }
-                throw new Error("No text received from Gemini");
-            } catch (error) {
-                console.error("Gemini Analysis Error:", error);
-                const errMsg = extractAIErrorMessage(error, AIProvider.Gemini);
-                // Throw so executeWithFallback can catch it
-                throw new Error(errMsg);
-            }
-        } else {
-            // OpenRouter or Venice
-            try {
+      try {
                 const schemaPrompt = `${promptText}
 
 Ensure your response is valid JSON that strictly matches this structure:
@@ -509,12 +396,11 @@ Ensure your response is valid JSON that strictly matches this structure:
                     mimeType: file.type,
                     apiKey: getApiKeyForProvider(provider)
                 });
-                return response.data;
-            } catch (error) {
-                console.error(`${provider} Analysis Error:`, error);
-                throw new Error(extractAIErrorMessage(error, provider));
-            }
-        }
+        return response.data;
+      } catch (error) {
+        console.error(`${provider} Analysis Error:`, error);
+        throw new Error(extractAIErrorMessage(error, provider));
+      }
     }).catch(error => {
         throw new Error(`Analysis failed: ${error.message}`);
     });
@@ -522,11 +408,11 @@ Ensure your response is valid JSON that strictly matches this structure:
 
 export const restoreCard = async (file: File, settings: ProcessingSettings, analysis?: AnalysisResult): Promise<string> => {
     const config = settings.aiConfig;
-    const provider = config?.provider || AIProvider.Gemini;
-    const primaryModel = config?.modelId || 'gemini-3.1-flash-image-preview';
-    let fallbackModel = 'gemini-1.5-flash';
-    if (provider === AIProvider.OpenRouter) fallbackModel = 'google/gemini-2.0-flash-001';
-    if (provider === AIProvider.Venice) fallbackModel = 'qwen-image-2-pro-edit';
+    const provider = config?.provider || AIProvider.Venice;
+    const primaryModel = provider === AIProvider.Venice
+      ? 'qwen-image-2-pro-edit'
+      : config?.modelId || PROVIDER_CONFIGS[provider].defaultModel;
+    const fallbackModel = PROVIDER_CONFIGS[provider].defaultModel;
 
     let base64Image = '';
     let mimeType = file.type;
@@ -551,64 +437,26 @@ export const restoreCard = async (file: File, settings: ProcessingSettings, anal
     const prompt = `Task: Sports Card Restoration.\n${strengthPrompt}\n${settings.enableUpscaling ? "Upscale the image resolution and enhance clarity." : ""}\nInput Context: The card has ${analysis?.issues.join(", ")}.\nRequirement: You MUST return a single image as the output. The image should be a restored version of the input card.\nConstraint: Preserve player face, team logos, and text PERFECTLY. Output as a clean, high-quality scan. If you cannot generate an image, tell me why in one sentence.`;
 
     return executeWithFallback(provider, primaryModel, fallbackModel, async (modelId) => {
-        if (provider === AIProvider.Gemini) {
-            try {
-                const ai = await getGeminiClient(true);
-                const response = await ai.models.generateContent({
-                    model: modelId,
-                    contents: {
-                        parts: [
-                            { inlineData: { mimeType: mimeType, data: base64Image } },
-                            { text: prompt }
-                        ]
-                    },
-                    config: {
-                        imageConfig: {
-                            imageSize: "1K",
-                            aspectRatio: "3:4"
-                        }
-                    }
-                });
-                
-                const parts = response.candidates?.[0]?.content?.parts || [];
-                for (const part of parts) {
-                    if (part.inlineData) {
-                        return `data:image/png;base64,${part.inlineData.data}`;
-                    }
-                }
-                
-                if (response.text) {
-                    throw new Error(`Restoration failed (Safety/Text): ${response.text}`);
-                }
-                
-                throw new Error("Restoration failed: No image returned from model.");
-            } catch (error) {
-                console.error("Gemini Restore Error:", error);
-                throw new Error(extractAIErrorMessage(error, AIProvider.Gemini));
-            }
-        } else {
-            // OpenRouter or Venice
-            try {
-                const response = await axios.post("/api/ai/restore", {
-                    provider,
-                    modelId,
-                    prompt,
-                    imageBase64: base64Image,
-                    mimeType,
-                    settings,
-                    apiKey: getApiKeyForProvider(provider)
-                });
-                const imgData = response.data.images?.[0];
-                if (imgData && imgData.url) {
-                    if (imgData.url.startsWith('data:')) return imgData.url;
-                    return `data:image/png;base64,${imgData.url}`;
-                }
-                if (response.data.image_url) return response.data.image_url;
-                throw new Error("No image data received from proxy.");
-            } catch (error: any) {
-                console.error(`${provider} Restore Error:`, error.response?.data || error.message);
-                throw new Error(extractAIErrorMessage(error, provider));
-            }
+      try {
+        const response = await axios.post("/api/ai/restore", {
+          provider,
+          modelId,
+          prompt,
+          imageBase64: base64Image,
+          mimeType,
+          settings,
+          apiKey: getApiKeyForProvider(provider),
+        });
+        const imgData = response.data.images?.[0];
+        if (imgData?.url) {
+          if (imgData.url.startsWith('data:')) return imgData.url;
+          return `data:image/png;base64,${imgData.url}`;
         }
+        if (response.data.image_url) return response.data.image_url;
+        throw new Error("No image data received from proxy.");
+      } catch (error: any) {
+        console.error(`${provider} Restore Error:`, error.response?.data || error.message);
+        throw new Error(extractAIErrorMessage(error, provider));
+      }
     });
 };

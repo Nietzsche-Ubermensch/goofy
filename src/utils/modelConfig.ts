@@ -1,21 +1,79 @@
 import { AIProvider } from '../types';
 
 export interface ProviderConfig {
-  endpoint: string;
+  imageEndpoint: string;
   defaultModel: string;
 }
 
 export const PROVIDER_CONFIGS: Record<AIProvider, ProviderConfig> = {
-  [AIProvider.Gemini]: { endpoint: 'https://generativelanguage.googleapis.com', defaultModel: 'gemini-3-pro-image-preview' },
-  [AIProvider.OpenRouter]: { endpoint: 'https://openrouter.ai/api/v1', defaultModel: 'google/gemini-2.0-flash-001' },
-  [AIProvider.Venice]: { endpoint: 'https://api.venice.ai/api/v1', defaultModel: 'flux-2-pro' },
-  [AIProvider.OpenAI]: { endpoint: 'https://api.openai.com/v1', defaultModel: 'dall-e-3' },
-  [AIProvider.xAI]: { endpoint: 'https://api.x.ai/v1', defaultModel: 'gpt-image-1.5' },
+  [AIProvider.OpenRouter]: {
+    imageEndpoint: 'https://openrouter.ai/api/v1/images/generations',
+    defaultModel: 'openai/gpt-image-1',
+  },
+  [AIProvider.Venice]: {
+    imageEndpoint: 'https://api.venice.ai/api/v1/image/generate',
+    defaultModel: 'flux-2-pro',
+  },
+  [AIProvider.OpenAI]: {
+    imageEndpoint: 'https://api.openai.com/v1/images/generations',
+    defaultModel: 'dall-e-3',
+  },
+  [AIProvider.xAI]: {
+    imageEndpoint: 'https://api.x.ai/v1/images/generations',
+    defaultModel: 'gpt-image-1.5',
+  },
 };
 
 export const getHeaders = (provider: AIProvider, apiKey: string): Record<string, string> => {
-  return {
+  const headers: Record<string, string> = {
     'Content-Type': 'application/json',
-    'Authorization': `Bearer ${apiKey}`,
+    Authorization: ['Bearer', apiKey].join(' '),
+  };
+
+  if (provider === AIProvider.OpenRouter) {
+    headers['X-Title'] = 'CardCrop AI Suite';
+  }
+
+  return headers;
+};
+
+export interface ImageGenerationPayload {
+  prompt: string;
+  model?: string;
+  size?: string;
+  response_format?: string;
+}
+
+const IMAGE_SIZES: Record<string, string> = {
+  '1K': '1024x1024',
+  '2K': '2048x2048',
+  '4K': '4096x4096',
+};
+
+export const normalizeImageSize = (size = '1024x1024'): string => IMAGE_SIZES[size] || size;
+
+export const createImageGenerationPayload = (
+  provider: AIProvider,
+  payload: ImageGenerationPayload,
+): Record<string, string | number> => {
+  const config = PROVIDER_CONFIGS[provider];
+  const model = payload.model || config.defaultModel;
+  const size = normalizeImageSize(payload.size);
+
+  if (provider === AIProvider.Venice) {
+    const [width, height] = size.split('x').map(Number);
+    return {
+      model,
+      prompt: payload.prompt,
+      width: Number.isFinite(width) ? width : 1024,
+      height: Number.isFinite(height) ? height : 1024,
+    };
+  }
+
+  return {
+    model,
+    prompt: payload.prompt,
+    size,
+    response_format: payload.response_format || 'b64_json',
   };
 };

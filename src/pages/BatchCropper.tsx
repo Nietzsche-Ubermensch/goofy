@@ -19,8 +19,8 @@ const BatchCropper: React.FC = () => {
     backgroundColor: 'White',
     autoCrop: true,
     aiConfig: {
-      provider: AIProvider.Gemini,
-      modelId: 'gemini-3.1-flash-image-preview'
+      provider: AIProvider.Venice,
+      modelId: 'llama-3.2-90b-vision'
     }
   });
 
@@ -198,7 +198,7 @@ const BatchCropper: React.FC = () => {
              addLog(`SYSTEM ALERT: Authentication failed. Update your API Key in Config.`);
              // Optionally open config right away if we have an open handler:
              // but we don't have a direct hook into SettingsModal here easily unless we use the handleApiKeyUpdate
-             // Actually handleApiKeyUpdate opens aistudio key if gemini or we can just leave it as log
+             // Configuration is managed by the selected provider.
           } else if (errMsg?.includes('invalid')) {
               addLog(`SYSTEM ALERT: Invalid parameters or file format. Try a different format.`);
           } else if (errMsg?.includes('not found') || errMsg?.includes('fallback model')) {
@@ -425,9 +425,8 @@ const BatchCropper: React.FC = () => {
                      value={settings.aiConfig.provider}
                      onChange={(e) => {
                        const provider = e.target.value as AIProvider;
-                       let modelId = 'gemini-3.1-flash-image-preview';
-                       if (provider === AIProvider.OpenRouter) modelId = 'google/gemini-2.0-flash-001';
-                       if (provider === AIProvider.Venice) modelId = 'flux-pro';
+                       let modelId = 'meta-llama/llama-3.2-11b-vision-instruct';
+                       if (provider === AIProvider.Venice) modelId = 'llama-3.2-90b-vision';
                        setSettings({
                          ...settings, 
                          aiConfig: { provider, modelId }
@@ -435,7 +434,6 @@ const BatchCropper: React.FC = () => {
                      }}
                      className="w-full bg-black/40 border border-[rgba(0,243,255,0.3)] rounded-sm px-2 py-1.5 text-[11px] font-mono text-[#00f3ff] focus:outline-none focus:border-[#00f3ff] transition-colors holo-border"
                    >
-                       <option value={AIProvider.Gemini}>Google Gemini</option>
                        <option value={AIProvider.OpenRouter}>OpenRouter API</option>
                        <option value={AIProvider.Venice}>Venice API</option>
                    </select>
@@ -450,15 +448,9 @@ const BatchCropper: React.FC = () => {
                          })}
                          className="w-full bg-black/40 border border-[rgba(0,243,255,0.3)] rounded-sm px-2 py-1.5 text-[10px] font-mono text-[#00f3ff] focus:outline-none focus:border-[#00f3ff] transition-colors holo-border"
                        >
-                           {settings.aiConfig.provider === AIProvider.Gemini && (
-                               <>
-                                   <option value="gemini-2.0-flash">gemini-2.0-flash</option>
-                                   <option value="gemini-3.1-flash-image-preview">gemini-3.1-flash-preview</option>
-                               </>
-                           )}
                            {settings.aiConfig.provider === AIProvider.OpenRouter && (
                                <>
-                                   <option value="google/gemini-2.0-flash-001">gemini-2.0-flash-001</option>
+                                   <option value="meta-llama/llama-3.2-11b-vision-instruct">llama-3.2-11b-vision-instruct</option>
                                    <option value="anthropic/claude-3.5-sonnet">claude-3.5-sonnet</option>
                                </>
                            )}
