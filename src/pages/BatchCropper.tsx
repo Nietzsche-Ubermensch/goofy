@@ -1,7 +1,8 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Upload, X, Loader2, Download, Settings2, Play, Trash2, Search, Sliders, Crop, Wand2, Key, Info, CheckCircle2 } from 'lucide-react';
-import { CardImage, ProcessingStatus, ProcessingSettings, AIProvider } from '../types';
+import { CardImage, ProcessingStatus, ProcessingSettings, AIProvider, EnhancementSettings, CropQuad } from '../types';
 import { analyzeCardDamage, restoreCard } from '../services/aiService';
+import { WebGLCardRenderer } from '../webgl/webglRenderer';
 import JSZip from 'jszip';
 
 const BatchCropper: React.FC = () => {
@@ -21,7 +22,15 @@ const BatchCropper: React.FC = () => {
     aiConfig: {
       provider: AIProvider.Gemini,
       modelId: 'gemini-3.1-flash-image-preview'
-    }
+    },
+    // Manual WebGL Enhancement defaults
+    brightness: 0.0,
+    contrast: 1.0,
+    saturation: 1.1,
+    vibrance: 0.2,
+    sharpen: 0.35,
+    descratchThreshold: 0.16,
+    descratchRadius: 3.5
   });
 
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -61,6 +70,56 @@ const BatchCropper: React.FC = () => {
       console.error("Failed to convert base64 to blob", e);
       return base64; // Fallback
     }
+  };
+
+  // Apply manual WebGL enhancements to an image
+  const applyManualEnhancements = async (imageDataUrl: string, settings: ProcessingSettings): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = async () => {
+        try {
+          // Create temporary canvas for WebGL processing
+          const tempCanvas = document.createElement('canvas');
+          tempCanvas.width = img.width;
+          tempCanvas.height = img.height;
+          
+          const renderer = new WebGLCardRenderer(tempCanvas);
+          
+          // Convert settings to EnhancementSettings format
+          const enhancementSettings: EnhancementSettings = {
+            brightness: settings.brightness,
+            contrast: settings.contrast,
+            saturation: settings.saturation,
+            vibrance: settings.vibrance,
+            sharpen: settings.sharpen,
+            descratchEnabled: settings.enableDescratching,
+            descratchThreshold: settings.descratchThreshold,
+            descratchRadius: settings.descratchRadius,
+            showScratchMask: false,
+            aspectRatio: null,
+            autoSnap: false
+          };
+          
+          // Create a simple quad that covers the entire image (no perspective crop)
+          const fullImageQuad: CropQuad = {
+            topLeft: { x: 0, y: 0 },
+            topRight: { x: 1, y: 0 },
+            bottomRight: { x: 1, y: 1 },
+            bottomLeft: { x: 0, y: 1 }
+          };
+          
+          // Apply enhancements using WebGL renderer
+          const enhancedBlobUrl = await renderer.exportCroppedHighRes(img, fullImageQuad, enhancementSettings);
+          resolve(enhancedBlobUrl);
+        } catch (err) {
+          console.error("Manual enhancement failed:", err);
+          reject(err);
+        }
+      };
+      img.onerror = () => reject(new Error("Failed to load image for enhancement"));
+      img.src = imageDataUrl;
+    });
   };
 
   const processFiles = (fileList: FileList | File[]) => {
@@ -179,14 +238,34 @@ const BatchCropper: React.FC = () => {
           addLog(`[${card.file.name}] Damage Score: ${analysis.damageScore} | Crop Conf: High`);
 
           // 2. Crop & Restore
-          addLog(`[${card.file.name}] Applying ${(settings.restorationStrength * 100).toFixed(0)}% restoration...`);
+          addLog(`[${card.file.name}] Applying ${(settings.restorationStrength * 100).toFixed(0)}% AI restoration...`);
           const restoredBase64 = await restoreCard(card.file, settings, analysis);
           
-          // Convert Base64 to Blob URL for memory efficiency
-          const restoredBlobUrl = base64ToBlobUrl(restoredBase64);
+          // 3. Apply manual WebGL enhancements
+          addLog(`[${card.file.name}] Applying manual enhancements (brightness, contrast, sharpen, etc.)...`);
+          let finalImageUrl = restoredBase64;
+          
+          // Check if any manual enhancement is non-default
+          const hasManualEnhancements = 
+            settings.brightness !== 0.0 || 
+            settings.contrast !== 1.0 || 
+            settings.saturation !== 1.0 || 
+            settings.vibrance !== 0.0 || 
+            settings.sharpen !== 0.0 ||
+            settings.enableDescratching;
+          
+          if (hasManualEnhancements) {
+            finalImageUrl = await applyManualEnhancements(restoredBase64, settings);
+            addLog(`[${card.file.name}] Manual enhancements applied.`);
+          } else {
+            addLog(`[${card.file.name}] Skipping manual enhancements (all at default values).`);
+          }
+          
+          // Convert to Blob URL for memory efficiency
+          const finalBlobUrl = finalImageUrl.startsWith('blob:') ? finalImageUrl : base64ToBlobUrl(finalImageUrl);
 
           setCards(prev => prev.map(c => 
-             c.id === card.id ? { ...c, status: ProcessingStatus.Completed, processedUrl: restoredBlobUrl } : c
+             c.id === card.id ? { ...c, status: ProcessingStatus.Completed, processedUrl: finalBlobUrl } : c
           ));
           addLog(`[${card.file.name}] Finished.`);
 
@@ -530,6 +609,159 @@ const BatchCropper: React.FC = () => {
                   />
                </label>
             </div>
+
+            {/* Manual Enhancement Controls */}
+            <div>
+               <div className="flex items-center justify-between mb-2">
+                   <label className="text-[10px] font-bold text-[rgba(0,243,255,0.7)] uppercase tracking-wide font-mono">Manual Enhancements</label>
+                   <Sliders size={12} className="text-[rgba(0,243,255,0.7)]"/>
+               </div>
+               <div className="space-y-3 p-3 bg-black/40 rounded-sm border border-[rgba(0,243,255,0.3)] holo-border">
+                  {/* Brightness */}
+                  <div className="space-y-1">
+                     <div className="flex justify-between items-center">
+                        <span className="text-[9px] font-mono text-[rgba(0,243,255,0.8)]">Brightness</span>
+                        <span className="text-[9px] font-mono text-[#00f3ff] bg-black/60 px-1.5 py-0.5 rounded border border-[rgba(0,243,255,0.3)]">
+                           {settings.brightness.toFixed(2)}
+                        </span>
+                     </div>
+                     <input
+                        type="range"
+                        min="-0.3"
+                        max="0.3"
+                        step="0.01"
+                        value={settings.brightness}
+                        onChange={(e) => setSettings({...settings, brightness: parseFloat(e.target.value)})}
+                        className="w-full accent-[#00f3ff] h-1 bg-[rgba(0,243,255,0.2)] rounded-none appearance-none cursor-pointer border border-[rgba(0,243,255,0.3)]"
+                     />
+                  </div>
+
+                  {/* Contrast */}
+                  <div className="space-y-1">
+                     <div className="flex justify-between items-center">
+                        <span className="text-[9px] font-mono text-[rgba(0,243,255,0.8)]">Contrast</span>
+                        <span className="text-[9px] font-mono text-[#00f3ff] bg-black/60 px-1.5 py-0.5 rounded border border-[rgba(0,243,255,0.3)]">
+                           {settings.contrast.toFixed(2)}
+                        </span>
+                     </div>
+                     <input
+                        type="range"
+                        min="0.5"
+                        max="2.0"
+                        step="0.01"
+                        value={settings.contrast}
+                        onChange={(e) => setSettings({...settings, contrast: parseFloat(e.target.value)})}
+                        className="w-full accent-[#00f3ff] h-1 bg-[rgba(0,243,255,0.2)] rounded-none appearance-none cursor-pointer border border-[rgba(0,243,255,0.3)]"
+                     />
+                  </div>
+
+                  {/* Saturation */}
+                  <div className="space-y-1">
+                     <div className="flex justify-between items-center">
+                        <span className="text-[9px] font-mono text-[rgba(0,243,255,0.8)]">Saturation</span>
+                        <span className="text-[9px] font-mono text-[#00f3ff] bg-black/60 px-1.5 py-0.5 rounded border border-[rgba(0,243,255,0.3)]">
+                           {settings.saturation.toFixed(2)}
+                        </span>
+                     </div>
+                     <input
+                        type="range"
+                        min="0.0"
+                        max="2.0"
+                        step="0.01"
+                        value={settings.saturation}
+                        onChange={(e) => setSettings({...settings, saturation: parseFloat(e.target.value)})}
+                        className="w-full accent-[#00f3ff] h-1 bg-[rgba(0,243,255,0.2)] rounded-none appearance-none cursor-pointer border border-[rgba(0,243,255,0.3)]"
+                     />
+                  </div>
+
+                  {/* Vibrance */}
+                  <div className="space-y-1">
+                     <div className="flex justify-between items-center">
+                        <span className="text-[9px] font-mono text-[rgba(0,243,255,0.8)]">Vibrance</span>
+                        <span className="text-[9px] font-mono text-[#00f3ff] bg-black/60 px-1.5 py-0.5 rounded border border-[rgba(0,243,255,0.3)]">
+                           {settings.vibrance.toFixed(2)}
+                        </span>
+                     </div>
+                     <input
+                        type="range"
+                        min="-0.5"
+                        max="0.5"
+                        step="0.01"
+                        value={settings.vibrance}
+                        onChange={(e) => setSettings({...settings, vibrance: parseFloat(e.target.value)})}
+                        className="w-full accent-[#00f3ff] h-1 bg-[rgba(0,243,255,0.2)] rounded-none appearance-none cursor-pointer border border-[rgba(0,243,255,0.3)]"
+                     />
+                  </div>
+
+                  {/* Sharpen */}
+                  <div className="space-y-1">
+                     <div className="flex justify-between items-center">
+                        <span className="text-[9px] font-mono text-[rgba(0,243,255,0.8)]">Sharpen</span>
+                        <span className="text-[9px] font-mono text-[#00f3ff] bg-black/60 px-1.5 py-0.5 rounded border border-[rgba(0,243,255,0.3)]">
+                           {settings.sharpen.toFixed(2)}
+                        </span>
+                     </div>
+                     <input
+                        type="range"
+                        min="0.0"
+                        max="1.0"
+                        step="0.01"
+                        value={settings.sharpen}
+                        onChange={(e) => setSettings({...settings, sharpen: parseFloat(e.target.value)})}
+                        className="w-full accent-[#00f3ff] h-1 bg-[rgba(0,243,255,0.2)] rounded-none appearance-none cursor-pointer border border-[rgba(0,243,255,0.3)]"
+                     />
+                  </div>
+               </div>
+            </div>
+
+            {/* Descratch Fine-Tuning */}
+            {settings.enableDescratching && (
+               <div>
+                  <div className="flex items-center justify-between mb-2">
+                      <label className="text-[10px] font-bold text-[rgba(0,243,255,0.7)] uppercase tracking-wide font-mono">Descratch Control</label>
+                      <Sliders size={12} className="text-[rgba(0,243,255,0.7)]"/>
+                  </div>
+                  <div className="space-y-3 p-3 bg-black/40 rounded-sm border border-[rgba(0,243,255,0.3)] holo-border">
+                     {/* Threshold */}
+                     <div className="space-y-1">
+                        <div className="flex justify-between items-center">
+                           <span className="text-[9px] font-mono text-[rgba(0,243,255,0.8)]">Sensitivity</span>
+                           <span className="text-[9px] font-mono text-[#00f3ff] bg-black/60 px-1.5 py-0.5 rounded border border-[rgba(0,243,255,0.3)]">
+                              {settings.descratchThreshold.toFixed(2)}
+                           </span>
+                        </div>
+                        <input
+                           type="range"
+                           min="0.05"
+                           max="0.4"
+                           step="0.01"
+                           value={settings.descratchThreshold}
+                           onChange={(e) => setSettings({...settings, descratchThreshold: parseFloat(e.target.value)})}
+                           className="w-full accent-[#00f3ff] h-1 bg-[rgba(0,243,255,0.2)] rounded-none appearance-none cursor-pointer border border-[rgba(0,243,255,0.3)]"
+                        />
+                     </div>
+
+                     {/* Radius */}
+                     <div className="space-y-1">
+                        <div className="flex justify-between items-center">
+                           <span className="text-[9px] font-mono text-[rgba(0,243,255,0.8)]">Inpaint Radius</span>
+                           <span className="text-[9px] font-mono text-[#00f3ff] bg-black/60 px-1.5 py-0.5 rounded border border-[rgba(0,243,255,0.3)]">
+                              {settings.descratchRadius.toFixed(1)}px
+                           </span>
+                        </div>
+                        <input
+                           type="range"
+                           min="1.0"
+                           max="8.0"
+                           step="0.5"
+                           value={settings.descratchRadius}
+                           onChange={(e) => setSettings({...settings, descratchRadius: parseFloat(e.target.value)})}
+                           className="w-full accent-[#00f3ff] h-1 bg-[rgba(0,243,255,0.2)] rounded-none appearance-none cursor-pointer border border-[rgba(0,243,255,0.3)]"
+                        />
+                     </div>
+                  </div>
+               </div>
+            )}
 
             {/* Console */}
             <div className="flex-1 flex flex-col min-h-[150px]">
