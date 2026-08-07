@@ -1,4 +1,3 @@
-
 import express from "express";
 import path from "path";
 import cors from "cors";
@@ -6,6 +5,7 @@ import dotenv from "dotenv";
 import axios from "axios";
 import { createServer as createViteServer } from "vite";
 import { getEffectiveKey, type AIProvider } from "./src/server/apiKeys";
+import { healthRouter } from "./src/server/healthRoute";
 
 dotenv.config();
 
@@ -15,6 +15,10 @@ async function startServer() {
   
   app.use(cors());
   app.use(express.json({ limit: '50mb' }));
+
+  // Health check endpoint — mounted early so it is always accessible
+  // without authentication or other middleware interference.
+  app.use('/health', healthRouter);
 
   // API Route for Proxying AI requests
   app.post("/api/ai/chat", async (req, res) => {
@@ -129,149 +133,39 @@ async function startServer() {
         } else if (provider === 'OpenRouter') {
             const response = await axios.post("https://openrouter.ai/api/v1/chat/completions", {
                 model: modelId,
-                messages: [{ role: "user", content: prompt }],
-                response_format: { type: "json_object" } 
+                messages: [{ role: "user", content: prompt }]
             }, {
-                headers: { "Authorization": `Bearer ${effectiveKey}` }
+                headers: {
+                    "Authorization": `Bearer ${effectiveKey}`,
+                    "Content-Type": "application/json",
+                    "HTTP-Referer": "https://aistudio.google.com",
+                    "X-Title": "CardCrop AI Suite"
+                }
             });
             return res.json(response.data);
         }
-        res.status(400).json({ error: "Unsupported provider for image proxy" });
+
+        res.status(400).json({ error: "Unsupported provider for image generation" });
     } catch (error) {
+        console.error("Image Generation Proxy Error:", error.response?.data || error.message);
         res.status(error.response?.status || 500).json(error.response?.data || { error: error.message });
     }
   });
 
-  // API Route for Vision/Analysis Proxy
-  app.post("/api/ai/analyze", async (req, res) => {
-    const { provider, modelId, imageBase64, mimeType, prompt, apiKey } = req.body;
-    const effectiveKey = getEffectiveKey(provider, apiKey);
-    if (!effectiveKey) {
-      return res.status(401).json({ error: `API key missing for ${provider}` });
-    }
+  // Serve static files from the dist directory in production
+  app.use(express.static(path.join(__dirname, "dist")));
 
-    try {
-      if (provider === 'OpenRouter') {
-        const response = await axios.post("https://openrouter.ai/api/v1/chat/completions", {
-          model: modelId || "google/gemini-2.0-flash-001",
-          messages: [
-            {
-              role: "user",
-              content: [
-                { type: "text", text: prompt },
-                { type: "image_url", image_url: { url: `data:${mimeType};base64,${imageBase64}` } }
-              ]
-            }
-          ],
-          response_format: { type: "json_object" }
-        }, {
-          headers: {
-            "Authorization": `Bearer ${effectiveKey}`,
-            "HTTP-Referer": "https://aistudio.google.com", 
-            "X-Title": "CardCrop AI Suite",
-          }
-        });
-        
-        let content = response.data.choices[0].message.content || '';
-        const match = content.match(/\{[\s\S]*\}/);
-        if (match) content = match[0];
-        return res.json(JSON.parse(content));
-      } else if (provider === 'Venice') {
-        const response = await axios.post("https://api.venice.ai/api/v1/chat/completions", {
-          model: modelId || "llama-3.2-90b-vision",
-          messages: [
-             {
-              role: "user",
-              content: [
-                { type: "text", text: prompt },
-                { type: "image_url", image_url: { url: `data:${mimeType};base64,${imageBase64}` } }
-              ]
-            }
-          ]
-        }, {
-           headers: { "Authorization": `Bearer ${effectiveKey}` }
-        });
-        let content = response.data.choices[0].message.content || '';
-        const match = content.match(/\{[\s\S]*\}/);
-        if (match) content = match[0];
-        return res.json(JSON.parse(content));
-      } else if (provider === 'OpenAI' || provider === 'xAI') {
-        const apiUrl = provider === 'OpenAI' ? 'https://api.openai.com/v1/chat/completions' : 'https://api.x.ai/v1/chat/completions';
-        const response = await axios.post(apiUrl, {
-          model: modelId || (provider === 'OpenAI' ? 'gpt-4o' : 'grok-vision-beta'),
-          messages: [
-            {
-              role: 'user',
-              content: [
-                { type: 'text', text: prompt },
-                { type: 'image_url', image_url: { url: `data:${mimeType};base64,${imageBase64}` } }
-              ]
-            }
-          ]
-        }, { headers: { 'Authorization': `Bearer ${effectiveKey}` } });
-        let content = response.data.choices[0].message.content || '';
-        const match = content.match(/\{[\s\S]*\}/);
-        if (match) content = match[0];
-        return res.json(JSON.parse(content));
-      } else if (provider === 'Gemini') {
-         // Optionally support Gemini proxy here, but client uses direct SDK
-      }
-      
-      res.status(400).json({ error: "Unsupported provider for analysis proxy" });
-    } catch (error) {
-      console.error("Analysis Proxy Error:", error.response?.data || error.message);
-      res.status(error.response?.status || 500).json(error.response?.data || { error: error.message });
-    }
+  // Fallback to index.html for client-side routing
+  app.get("*", (req, res) => {
+    res.sendFile(path.join(__dirname, "dist", "index.html"));
   });
 
-  // API Route for Image Restoration Proxy
-  app.post("/api/ai/restore", async (req, res) => {
-      const { provider, modelId, imageBase64, mimeType, prompt, settings, apiKey } = req.body;
-      const effectiveKey = getEffectiveKey(provider, apiKey);
-  
-      if (!effectiveKey) {
-        return res.status(401).json({ error: `API key missing for ${provider}` });
-      }
-
-      try {
-          if (provider === 'Venice') {
-              const response = await axios.post("https://api.venice.ai/api/v1/image/edit", {
-                  model: modelId || "qwen-image-2-pro-edit",
-                  prompt: prompt,
-                  image: `data:${mimeType};base64,${imageBase64}`,
-              }, {
-                  headers: { "Authorization": `Bearer ${effectiveKey}` }
-              });
-              return res.json(response.data);
-          } else if (provider === 'OpenRouter') {
-              res.status(400).json({ error: "OpenRouter does not support image-to-image visually yet." });
-          }
-          
-          res.status(400).json({ error: "Unsupported provider for image restore proxy" });
-      } catch (error) {
-          console.error("Restore Proxy Error:", error.response?.data || error.message);
-          res.status(error.response?.status || 500).json(error.response?.data || { error: error.message });
-      }
-  });
-
-  // Vite middleware for development
-  if (process.env.NODE_ENV !== "production") {
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: "spa",
-    });
-    app.use(vite.middlewares);
-  } else {
-    const distPath = path.join(process.cwd(), 'dist');
-    app.use(express.static(distPath));
-    app.get('*all', (req, res) => {
-      res.sendFile(path.join(distPath, 'index.html'));
-    });
-  }
-
-  app.listen(PORT, "0.0.0.0", () => {
+  app.listen(PORT, () => {
     console.log(`Server running on http://localhost:${PORT}`);
   });
 }
 
-startServer();
+startServer().catch((err) => {
+  console.error("Failed to start server:", err);
+  process.exit(1);
+});
