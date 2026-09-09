@@ -33,51 +33,6 @@ const ChatBot: React.FC = () => {
   const handleSend = async () => {
     if (!inputText.trim()) return;
 
-    if (aiConfig.provider === AIProvider.Gemini) {
-        if (typeof window !== 'undefined' && window.aistudio) {
-            const hasKey = await window.aistudio.hasSelectedApiKey();
-            if (!hasKey) {
-                setMessages(prev => [...prev, {
-                    id: Date.now().toString(),
-                    role: 'model',
-                    text: 'SYSTEM ALERT: Gemini API Key not selected. Please configure it in the global Settings modal.',
-                    timestamp: new Date()
-                }]);
-                return;
-            }
-        } else {
-            const geminiKey = typeof window !== 'undefined' ? localStorage.getItem('CUSTOM_GEMINI_KEY') : null;
-            if (!geminiKey) {
-               setMessages(prev => [...prev, {
-                    id: Date.now().toString(),
-                    role: 'model',
-                    text: 'SYSTEM ALERT: Gemini API Key is missing. Please configure it in the global Settings modal.',
-                    timestamp: new Date()
-                }]);
-                return;
-            }
-        }
-    } else {
-        const keyMap = {
-            [AIProvider.OpenRouter]: 'CUSTOM_OPENROUTER_KEY',
-            [AIProvider.Venice]: 'CUSTOM_VENICE_KEY',
-            [AIProvider.OpenAI]: 'CUSTOM_OPENAI_KEY',
-            [AIProvider.xAI]: 'CUSTOM_XAI_KEY'
-        };
-        const storageKey = keyMap[aiConfig.provider as keyof typeof keyMap];
-        const hasCustomKey = storageKey && typeof window !== 'undefined' && localStorage.getItem(storageKey);
-        
-        if (!hasCustomKey) {
-            setMessages(prev => [...prev, {
-                id: Date.now().toString(),
-                role: 'model',
-                text: `SYSTEM ALERT: ${aiConfig.provider} API Key is missing. Please enter it in the global Settings modal.`,
-                timestamp: new Date()
-            }]);
-            return;
-        }
-    }
-
     const userMsg: ChatMessage = {
       id: Date.now().toString(),
       role: 'user',
@@ -116,7 +71,7 @@ const ChatBot: React.FC = () => {
       setMessages(prev => [...prev, {
         id: Date.now().toString(),
         role: 'model',
-        text: `Error: ${error instanceof Error ? error.message : "I encountered a connection error. Please verify your API key configuration."}`,
+        text: `Error: ${error instanceof Error ? error.message : "I encountered a connection error. Please verify server connection."}`,
         timestamp: new Date()
       }]);
     } finally {
@@ -173,14 +128,15 @@ const ChatBot: React.FC = () => {
                 >
                     {aiConfig.provider === AIProvider.Gemini && (
                         <>
+                            <option value="gemini-3.7-flash">3.7 Flash</option>
                             <option value="gemini-3.1-pro-preview">3.1 Pro</option>
-                            <option value="gemini-2.0-flash">2.0 Flash</option>
+                            <option value="gemini-2.5-flash">2.5 Flash</option>
                         </>
                     )}
                     {aiConfig.provider === AIProvider.OpenRouter && (
                         <>
                             <option value="anthropic/claude-3.5-sonnet">Claude 3.5 Sonnet</option>
-                            <option value="google/gemini-2.0-flash-001">Gemini 2.0 Flash</option>
+                            <option value="google/gemini-2.5-flash">Gemini 2.5 Flash</option>
                         </>
                     )}
                     {aiConfig.provider === AIProvider.OpenAI && (
@@ -191,7 +147,8 @@ const ChatBot: React.FC = () => {
                     )}
                     {aiConfig.provider === AIProvider.xAI && (
                         <>
-                            <option value="grok-beta">Grok</option>
+                            <option value="grok-2">Grok 2</option>
+                            <option value="grok-beta">Grok Beta</option>
                         </>
                     )}
                     {aiConfig.provider === AIProvider.Venice && (

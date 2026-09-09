@@ -7,7 +7,7 @@ interface PresetsBarProps {
   cards: CardItem[];
   activeCardId: string;
   onSelectCard: (id: string) => void;
-  onFileUpload: (files: FileList) => void;
+  onFileUpload: (files: FileList | File[]) => void;
 }
 
 export const PresetsBar: React.FC<PresetsBarProps> = ({

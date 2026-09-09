@@ -64,6 +64,7 @@ export interface CardItem {
   width: number;
   height: number;
   quad: CropQuad;
+  rotation?: number;
   processedBlobUrl?: string;
   status: AppState;
   isPreset?: boolean;
@@ -123,6 +124,9 @@ export interface ProcessingSettings {
   sharpen: number;
   descratchThreshold: number;
   descratchRadius: number;
+  microDustFilter?: boolean;
+  antiGlare?: boolean;
+  chromeParallelClarity?: boolean;
 }
 
 export interface ChatMessage {
@@ -147,6 +151,10 @@ export interface CardImage {
   originalWidth: number;
   originalHeight: number;
   analysis?: AnalysisResult;
+  quad?: CropQuad;
+  rotation?: number;
+  customSettings?: Partial<ProcessingSettings>;
+  isCustomConfigured?: boolean;
 }
 
 declare global {

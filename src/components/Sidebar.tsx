@@ -1,18 +1,20 @@
 import React, { useState } from 'react';
-import { Crop, Layers, Wand2, MessageSquare, Settings, ShieldCheck, Sparkles } from 'lucide-react';
+import { Crop, Layers, Wand2, MessageSquare, Settings, ShieldCheck, Sparkles, Keyboard } from 'lucide-react';
 import SettingsModal from './SettingsModal';
 
 interface SidebarProps {
   currentView: string;
-  onViewChange: (view: 'cropper' | 'batch' | 'generator' | 'chat') => void;
+  onViewChange: (view: 'cropper' | 'batch' | 'enhancer' | 'generator' | 'chat') => void;
+  onOpenShortcuts?: () => void;
 }
 
-const Sidebar: React.FC<SidebarProps> = ({ currentView, onViewChange }) => {
+const Sidebar: React.FC<SidebarProps> = ({ currentView, onViewChange, onOpenShortcuts }) => {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
   const navItems = [
+    { id: 'enhancer', label: 'AI Card Auto-Enhancer', icon: Sparkles, desc: 'ComfyUI & neural upscale pipeline' },
+    { id: 'batch', label: 'Card Batch Workbench', icon: Layers, desc: 'Multi-card queue & bulk enhancement' },
     { id: 'cropper', label: 'Single Card Editor', icon: Crop, desc: 'Quad crop & GPU enhancement' },
-    { id: 'batch', label: 'Batch Processor', icon: Layers, desc: 'Multi-card queue & ZIP export' },
     { id: 'generator', label: 'Card Art Generator', icon: Wand2, desc: 'Create custom card artwork' },
     { id: 'chat', label: 'Card Assistant', icon: MessageSquare, desc: 'Grading & damage analysis' },
   ];
@@ -60,8 +62,21 @@ const Sidebar: React.FC<SidebarProps> = ({ currentView, onViewChange }) => {
         })}
       </nav>
 
-      {/* Footer Settings */}
-      <div className="p-3 bg-slate-900/80 border-t border-slate-800">
+      {/* Footer Settings & Hotkeys */}
+      <div className="p-3 bg-slate-900/80 border-t border-slate-800 space-y-1.5">
+        {onOpenShortcuts && (
+          <button
+            onClick={onOpenShortcuts}
+            className="w-full flex items-center justify-between px-3 py-2 rounded-xl text-slate-300 hover:text-cyan-300 hover:bg-slate-800 transition-colors text-xs font-medium border border-slate-800/80"
+          >
+            <div className="flex items-center gap-2.5">
+              <Keyboard size={15} className="text-cyan-400" />
+              <span>Keyboard Shortcuts</span>
+            </div>
+            <kbd className="px-1.5 py-0.2 rounded bg-cyan-500/20 text-cyan-300 border border-cyan-400/30 text-[10px] font-mono font-bold">?</kbd>
+          </button>
+        )}
+
         <button
           onClick={() => setIsSettingsOpen(true)}
           className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition-colors text-xs font-medium border border-slate-800"
@@ -70,7 +85,7 @@ const Sidebar: React.FC<SidebarProps> = ({ currentView, onViewChange }) => {
           <span>API & Model Settings</span>
         </button>
 
-        <div className="mt-2 flex items-center justify-between px-2 py-1 text-[10px] text-slate-500 font-mono">
+        <div className="mt-1 flex items-center justify-between px-2 py-1 text-[10px] text-slate-500 font-mono">
           <span className="flex items-center gap-1.5">
             <ShieldCheck size={12} className="text-emerald-400" />
             Local WebGL Engine
