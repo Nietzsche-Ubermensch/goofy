@@ -129,17 +129,32 @@ export interface ProcessingSettings {
   chromeParallelClarity?: boolean;
 }
 
+export interface GroundingSource {
+  title: string;
+  uri: string;
+}
+
 export interface ChatMessage {
   id: string;
   role: 'user' | 'model';
   text: string;
   timestamp: Date;
+  groundingSources?: GroundingSource[];
 }
 
 export enum ImageSize {
   Size1K = '1K',
   Size2K = '2K',
   Size4K = '4K'
+}
+
+export interface CardMetadataTags {
+  cardSeries?: string;
+  year?: string;
+  setName?: string;
+  player?: string;
+  gradeTarget?: string;
+  notes?: string;
 }
 
 export interface CardImage {
@@ -155,6 +170,7 @@ export interface CardImage {
   rotation?: number;
   customSettings?: Partial<ProcessingSettings>;
   isCustomConfigured?: boolean;
+  metadata?: CardMetadataTags;
 }
 
 declare global {

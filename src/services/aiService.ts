@@ -4,8 +4,127 @@ import {
   ProcessingSettings, 
   AnalysisResult, 
   AIProvider, 
-  AIModelConfig 
+  AIModelConfig,
+  GroundingSource
 } from "../types";
+
+export const getApiBaseUrl = (): string => {
+  if (typeof window !== 'undefined') {
+    const customUrl = localStorage.getItem('CUSTOM_BACKEND_URL');
+    if (customUrl && customUrl.trim().length > 0) {
+      return customUrl.trim().replace(/\/+$/, '');
+    }
+  }
+  return '';
+};
+
+export const getApiKeyForProvider = (provider: AIProvider): string | null => {
+  const keyMap = {
+      [AIProvider.Gemini]: 'CUSTOM_GEMINI_KEY',
+      [AIProvider.OpenRouter]: 'CUSTOM_OPENROUTER_KEY',
+      [AIProvider.Venice]: 'CUSTOM_VENICE_KEY',
+      [AIProvider.OpenAI]: 'CUSTOM_OPENAI_KEY',
+      [AIProvider.xAI]: 'CUSTOM_XAI_KEY'
+  };
+  const storageKey = keyMap[provider];
+  return storageKey && typeof window !== 'undefined' ? localStorage.getItem(storageKey) : null;
+};
+
+export const setApiKeyForProvider = (provider: AIProvider, key: string): void => {
+  const keyMap = {
+      [AIProvider.Gemini]: 'CUSTOM_GEMINI_KEY',
+      [AIProvider.OpenRouter]: 'CUSTOM_OPENROUTER_KEY',
+      [AIProvider.Venice]: 'CUSTOM_VENICE_KEY',
+      [AIProvider.OpenAI]: 'CUSTOM_OPENAI_KEY',
+      [AIProvider.xAI]: 'CUSTOM_XAI_KEY'
+  };
+  const storageKey = keyMap[provider];
+  if (storageKey && typeof window !== 'undefined') {
+    if (key && key.trim().length > 0) {
+      localStorage.setItem(storageKey, key.trim());
+    } else {
+      localStorage.removeItem(storageKey);
+    }
+  }
+};
+
+/**
+ * Helper function to retrieve configured API keys from localStorage
+ * and inject them as 'X-API-KEY' (and provider-specific headers) into all backend requests.
+ */
+export const getApiKeyHeaders = (provider?: AIProvider): Record<string, string> => {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  };
+
+  const geminiKey = getApiKeyForProvider(AIProvider.Gemini);
+  const openRouterKey = getApiKeyForProvider(AIProvider.OpenRouter);
+  const veniceKey = getApiKeyForProvider(AIProvider.Venice);
+  const openAIKey = getApiKeyForProvider(AIProvider.OpenAI);
+  const xAIKey = getApiKeyForProvider(AIProvider.xAI);
+
+  if (geminiKey) {
+    headers['x-gemini-api-key'] = geminiKey;
+    headers['x-gemini-key'] = geminiKey;
+  }
+  if (openRouterKey) {
+    headers['x-openrouter-api-key'] = openRouterKey;
+  }
+  if (veniceKey) {
+    headers['x-venice-api-key'] = veniceKey;
+  }
+  if (openAIKey) {
+    headers['x-openai-api-key'] = openAIKey;
+  }
+  if (xAIKey) {
+    headers['x-xai-api-key'] = xAIKey;
+  }
+
+  // Determine active key for standard X-API-KEY and Authorization headers
+  let activeKey: string | null = null;
+  if (provider) {
+    activeKey = getApiKeyForProvider(provider);
+  }
+  if (!activeKey) {
+    activeKey = geminiKey || openRouterKey || veniceKey || openAIKey || xAIKey;
+  }
+
+  if (activeKey) {
+    headers['X-API-KEY'] = activeKey;
+    headers['x-api-key'] = activeKey;
+    headers['Authorization'] = `Bearer ${activeKey}`;
+  }
+
+  return headers;
+};
+
+export const getAuthHeaders = getApiKeyHeaders;
+
+export const validateApiKey = async (
+  provider: AIProvider, 
+  apiKey?: string
+): Promise<{ valid: boolean; message?: string; error?: string; modelTested?: string }> => {
+  try {
+    const baseUrl = getApiBaseUrl();
+    const effectiveKey = apiKey || getApiKeyForProvider(provider);
+    const headers = getAuthHeaders(provider);
+    if (apiKey) {
+      headers['Authorization'] = `Bearer ${apiKey}`;
+      headers['x-api-key'] = apiKey;
+    }
+
+    const resp = await axios.post(`${baseUrl}/api/ai/validate-key`, {
+      provider,
+      apiKey: effectiveKey
+    }, { headers });
+    return resp.data;
+  } catch (err: any) {
+    return {
+      valid: false,
+      error: err.response?.data?.error || err.message || 'Connection test failed'
+    };
+  }
+};
 
 const fileToBase64 = async (file: File): Promise<string> => {
   return new Promise((resolve, reject) => {
@@ -101,7 +220,6 @@ export const cropImage = async (file: File, box: number[]): Promise<string> => {
              return;
         }
         
-        // downscale if cropped image is too large
         const maxDim = 1600;
         let canvasW = width;
         let canvasH = height;
@@ -131,40 +249,28 @@ export const cropImage = async (file: File, box: number[]): Promise<string> => {
   });
 };
 
-const getApiKeyForProvider = (provider: AIProvider): string | null => {
-  const keyMap = {
-      [AIProvider.Gemini]: 'CUSTOM_GEMINI_KEY',
-      [AIProvider.OpenRouter]: 'CUSTOM_OPENROUTER_KEY',
-      [AIProvider.Venice]: 'CUSTOM_VENICE_KEY',
-      [AIProvider.OpenAI]: 'CUSTOM_OPENAI_KEY',
-      [AIProvider.xAI]: 'CUSTOM_XAI_KEY'
-  };
-  const storageKey = keyMap[provider];
-  return storageKey && typeof window !== 'undefined' ? localStorage.getItem(storageKey) : null;
-};
-
 const extractAIErrorMessage = (error: any, provider: AIProvider): string => {
   let message = error.message || String(error);
   
   if (error.response) {
     const status = error.response.status;
     const data = error.response.data;
-    const detail = typeof data.error === 'string' ? data.error : data.error?.message || JSON.stringify(data);
+    const detail = typeof data?.error === 'string' ? data.error : data?.error?.message || data?.message || JSON.stringify(data);
     
     if (status === 401 || status === 403) {
-      return `Authentication failed for ${provider}. Please verify your API key in Settings. (${detail})`;
+      return `Authentication failed for ${provider}. Please enter a valid API key in Settings > API Keys & Backend. (${detail})`;
     } else if (status === 404) {
-      return `Model not found on ${provider}. Please select a different model.`;
+      return `Model not found on ${provider}. Please select a different model in Settings or Chat.`;
     } else if (status === 400) {
       return `Invalid request to ${provider}. (${detail})`;
     } else if (status === 429) {
-      return `Rate limit exceeded for ${provider}. Please try again later.`;
+      return `Rate limit or quota exceeded for ${provider}. Please check your key or try again shortly.`;
     }
     return `Server error (${status}) from ${provider}: ${detail}`;
   } 
   
   if (message.toLowerCase().includes("api key") || message.toLowerCase().includes("auth")) {
-    return `Authentication issue with ${provider}. Please verify your API key. (${message})`;
+    return `Authentication issue with ${provider}. Please verify your API key in Settings. (${message})`;
   }
 
   if (message.includes("not found")) {
@@ -186,7 +292,8 @@ const executeWithFallback = async <T,>(
     const errMsg = extractAIErrorMessage(error, provider).toLowerCase();
     const isModelError = errMsg.includes("not found") || 
                          errMsg.includes("discontinued") ||
-                         errMsg.includes("invalid request");
+                         errMsg.includes("invalid request") ||
+                         errMsg.includes("deprecated");
                          
     if (isModelError && primaryModelId !== fallbackModelId) {
       console.warn(`[Fallback] Model ${primaryModelId} failed on ${provider}, retrying with ${fallbackModelId}...`);
@@ -203,14 +310,16 @@ const executeWithFallback = async <T,>(
 export const generateBotResponse = async (
     history: { role: string; parts: { text: string }[] }[], 
     newMessage: string,
-    config?: AIModelConfig
-): Promise<string> => {
+    config?: AIModelConfig,
+    options?: { enableSearchGrounding?: boolean }
+): Promise<{ text: string; groundingSources?: GroundingSource[] }> => {
   const provider = config?.provider || AIProvider.Gemini;
-  const primaryModel = config?.modelId || (provider === AIProvider.OpenAI ? 'gpt-4o' : 'gemini-3.7-flash');
-  let fallbackModel = 'gemini-2.5-flash';
+  const primaryModel = config?.modelId || (provider === AIProvider.OpenAI ? 'gpt-4o' : 'gemini-3.5-flash');
+  let fallbackModel = 'gemini-3.7-flash';
   if (provider === AIProvider.OpenAI) fallbackModel = 'gpt-4o-mini';
-  if (provider === AIProvider.OpenRouter) fallbackModel = 'google/gemini-2.5-flash';
+  if (provider === AIProvider.OpenRouter) fallbackModel = 'anthropic/claude-3.5-sonnet';
   if (provider === AIProvider.Venice) fallbackModel = 'llama-3.3-70b';
+  if (provider === AIProvider.xAI) fallbackModel = 'grok-2';
   
   return executeWithFallback(provider, primaryModel, fallbackModel, async (modelId) => {
     try {
@@ -219,13 +328,21 @@ export const generateBotResponse = async (
         ...history.map(h => ({ role: h.role === 'model' ? 'assistant' : 'user', content: h.parts[0]?.text || '' })),
         { role: 'user', content: newMessage }
       ];
-      const response = await axios.post("/api/ai/chat", {
+      const baseUrl = getApiBaseUrl();
+      const headers = getAuthHeaders(provider);
+
+      const response = await axios.post(`${baseUrl}/api/ai/chat`, {
         provider,
         modelId,
         messages,
-        apiKey: getApiKeyForProvider(provider)
-      });
-      return response.data.choices?.[0]?.message?.content || "";
+        apiKey: getApiKeyForProvider(provider),
+        enableSearchGrounding: options?.enableSearchGrounding !== false
+      }, { headers });
+
+      return {
+        text: response.data.choices?.[0]?.message?.content || "",
+        groundingSources: response.data.groundingSources
+      };
     } catch (error: any) {
       console.error(`${provider} Chat Error:`, error.response?.data || error.message);
       throw new Error(extractAIErrorMessage(error, provider));
@@ -237,10 +354,12 @@ export const streamBotResponse = async (
     history: { role: string; parts: { text: string }[] }[], 
     newMessage: string,
     onChunk: (text: string) => void,
-    config?: AIModelConfig
+    config?: AIModelConfig,
+    onGroundingSources?: (sources: GroundingSource[]) => void,
+    options?: { enableSearchGrounding?: boolean }
 ): Promise<void> => {
   const provider = config?.provider || AIProvider.Gemini;
-  const modelId = config?.modelId || (provider === AIProvider.OpenAI ? 'gpt-4o' : 'gemini-2.5-flash');
+  const modelId = config?.modelId || (provider === AIProvider.OpenAI ? 'gpt-4o' : 'gemini-3.5-flash');
   
   try {
     const messages = [
@@ -249,15 +368,19 @@ export const streamBotResponse = async (
       { role: 'user', content: newMessage }
     ];
     
-    const res = await fetch("/api/ai/chat", {
+    const baseUrl = getApiBaseUrl();
+    const headers = getAuthHeaders(provider);
+
+    const res = await fetch(`${baseUrl}/api/ai/chat`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers,
         body: JSON.stringify({
            provider,
            modelId,
            messages,
            apiKey: getApiKeyForProvider(provider),
-           stream: true
+           stream: true,
+           enableSearchGrounding: options?.enableSearchGrounding !== false
         })
     });
 
@@ -290,8 +413,11 @@ export const streamBotResponse = async (
                    if (data.choices && data.choices[0].delta && data.choices[0].delta.content) {
                        onChunk(data.choices[0].delta.content);
                    }
+                   if (data.groundingSources && onGroundingSources) {
+                       onGroundingSources(data.groundingSources);
+                   }
                 } catch(e) {
-                   // ignore JSON parse errors on partial stream chunks
+                   // ignore parse errors on partial stream chunks
                 }
             }
         }
@@ -344,6 +470,7 @@ export const generateCardImage = async (
   } else if (provider === AIProvider.xAI) {
       optimizedPrompt = `High resolution, crisp, beautifully lit trading card art. Prompt: ${prompt}. Photorealistic, vibrant, stunning details.`;
   }
+
   let primaryModel = options.config?.modelId;
   if (!primaryModel) {
     if (provider === AIProvider.OpenAI) primaryModel = 'gpt-image-2';
@@ -354,21 +481,24 @@ export const generateCardImage = async (
   }
 
   let fallbackModel = 'gemini-3.1-flash-image';
-  if (provider === AIProvider.OpenAI) fallbackModel = 'gpt-image-1.5';
+  if (provider === AIProvider.OpenAI) fallbackModel = 'gpt-image-2';
   if (provider === AIProvider.xAI) fallbackModel = 'grok-imagine-image-2.0';
-  if (provider === AIProvider.OpenRouter) fallbackModel = 'bytedance-seed/seedream-4.5';
+  if (provider === AIProvider.OpenRouter) fallbackModel = 'black-forest-labs/flux.2-pro';
   if (provider === AIProvider.Venice) fallbackModel = 'flux-2-pro';
 
   return executeWithFallback(provider, primaryModel, fallbackModel, async (modelId) => {
     try {
-      const response = await axios.post("/api/ai/generate-image", {
+      const baseUrl = getApiBaseUrl();
+      const headers = getAuthHeaders(provider);
+
+      const response = await axios.post(`${baseUrl}/api/ai/generate-image`, {
         provider,
         modelId,
         prompt: optimizedPrompt,
         size,
         aspectRatio,
         apiKey: getApiKeyForProvider(provider)
-      });
+      }, { headers });
       
       if (response.data.data && response.data.data[0]?.b64_json) {
         return `data:image/png;base64,${response.data.data[0].b64_json}`;
@@ -419,7 +549,10 @@ ${options.prompt}`;
 
   return executeWithFallback(provider, primaryModel, fallbackModel, async (modelId) => {
     try {
-      const response = await axios.post("/api/ai/edit-image", {
+      const baseUrl = getApiBaseUrl();
+      const headers = getAuthHeaders(provider);
+
+      const response = await axios.post(`${baseUrl}/api/ai/edit-image`, {
         provider,
         modelId,
         prompt: fullPrompt,
@@ -428,7 +561,7 @@ ${options.prompt}`;
         size: options.size || ImageSize.Size1K,
         aspectRatio: options.aspectRatio || '3:4',
         apiKey: getApiKeyForProvider(provider)
-      });
+      }, { headers });
 
       if (response.data.image_url) {
         return {
@@ -454,10 +587,10 @@ export const analyzeCardDamage = async (file: File, config?: AIModelConfig): Pro
     const provider = config?.provider || AIProvider.Gemini;
     const base64 = await fileToBase64(file);
     const primaryModel = config?.modelId || (provider === AIProvider.OpenAI ? 'gpt-4o' : 'gemini-3.7-flash');
-    let fallbackModel = 'gemini-2.5-flash';
+    let fallbackModel = 'gemini-3.5-flash';
     if (provider === AIProvider.OpenAI) fallbackModel = 'gpt-4o-mini';
-    if (provider === AIProvider.OpenRouter) fallbackModel = 'google/gemini-2.5-flash';
-    if (provider === AIProvider.Venice) fallbackModel = 'llama-3.2-90b-vision';
+    if (provider === AIProvider.OpenRouter) fallbackModel = 'anthropic/claude-3.5-sonnet';
+    if (provider === AIProvider.Venice) fallbackModel = 'llama-3.3-70b';
     if (provider === AIProvider.xAI) fallbackModel = 'grok-2-vision-1212';
 
     const promptText = `Analyze this sports card image.
@@ -486,14 +619,17 @@ Ensure your response is valid JSON matching this exact structure:
   "recommendedFixes": ["Descratch surface mask", "Edge sharpening"],
   "boundingBox": [0.05, 0.05, 0.95, 0.95]
 }`;
-            const response = await axios.post("/api/ai/analyze", {
+            const baseUrl = getApiBaseUrl();
+            const headers = getAuthHeaders(provider);
+
+            const response = await axios.post(`${baseUrl}/api/ai/analyze`, {
                 provider,
                 modelId,
                 prompt: schemaPrompt,
                 imageBase64: base64,
                 mimeType: file.type || 'image/jpeg',
                 apiKey: getApiKeyForProvider(provider)
-            });
+            }, { headers });
             return response.data;
         } catch (error: any) {
             console.error(`${provider} Analysis Error:`, error);
@@ -507,11 +643,11 @@ Ensure your response is valid JSON matching this exact structure:
 export const restoreCard = async (file: File, settings: ProcessingSettings, analysis?: AnalysisResult): Promise<string> => {
     const config = settings.aiConfig;
     const provider = config?.provider || AIProvider.Gemini;
-    const primaryModel = config?.modelId || (provider === AIProvider.OpenAI ? 'gpt-image-2' : 'gemini-3.7-flash');
-    let fallbackModel = 'gemini-2.5-flash';
+    const primaryModel = config?.modelId || (provider === AIProvider.OpenAI ? 'gpt-image-2' : 'gemini-3.1-flash-image');
+    let fallbackModel = 'gemini-3.1-flash-lite-image';
     if (provider === AIProvider.OpenAI) fallbackModel = 'gpt-image-2';
-    if (provider === AIProvider.OpenRouter) fallbackModel = 'google/gemini-2.5-flash';
-    if (provider === AIProvider.Venice) fallbackModel = 'qwen-image-3-pro-edit';
+    if (provider === AIProvider.OpenRouter) fallbackModel = 'anthropic/claude-3.5-sonnet';
+    if (provider === AIProvider.Venice) fallbackModel = 'flux-2-pro';
     if (provider === AIProvider.xAI) fallbackModel = 'grok-imagine-image-2.0';
 
     let base64Image = '';
@@ -538,7 +674,10 @@ export const restoreCard = async (file: File, settings: ProcessingSettings, anal
 
     return executeWithFallback(provider, primaryModel, fallbackModel, async (modelId) => {
         try {
-            const response = await axios.post("/api/ai/restore", {
+            const baseUrl = getApiBaseUrl();
+            const headers = getAuthHeaders(provider);
+
+            const response = await axios.post(`${baseUrl}/api/ai/restore`, {
                 provider,
                 modelId,
                 prompt,
@@ -546,7 +685,7 @@ export const restoreCard = async (file: File, settings: ProcessingSettings, anal
                 mimeType,
                 settings,
                 apiKey: getApiKeyForProvider(provider)
-            });
+            }, { headers });
             const imgData = response.data.images?.[0];
             if (imgData && imgData.url) {
                 if (imgData.url.startsWith('data:')) return imgData.url;
@@ -560,4 +699,3 @@ export const restoreCard = async (file: File, settings: ProcessingSettings, anal
         }
     });
 };
-

@@ -29,15 +29,15 @@ export const PROVIDER_CONFIGS: Record<AIProvider, ProviderConfig> = {
   },
   [AIProvider.Gemini]: {
     endpoint: 'https://generativelanguage.googleapis.com',
-    defaultModel: 'gemini-2.5-flash',
+    defaultModel: 'gemini-3.1-flash-image',
     supportedModels: [
-      'gemini-2.5-flash',
-      'gemini-2.5-pro',
-      'gemini-3.1-flash-image-preview',
-      'gemini-3.1-pro-preview',
-      'gemini-2.0-flash',
+      'gemini-3.1-flash-image',
+      'gemini-3.1-flash-lite-image',
+      'gemini-3-pro-image',
+      'gemini-3.8-flash',
+      'gemini-3.7-flash',
+      'gemini-3.5-flash',
       'nano-banana-2',
-      'nano-banana-pro',
       'imagen-3.0-generate-002'
     ],
     supportedSizes: ['1024x1024', '1536x1024', '1024x1536', '1K', '2K'],

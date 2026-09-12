@@ -23,13 +23,28 @@ import {
   RefreshCw,
   FolderInput,
   FileDown,
-  Maximize2
+  Maximize2,
+  Tag,
+  PackageCheck,
+  Award
 } from 'lucide-react';
-import { CardImage, ProcessingStatus, ProcessingSettings, AIProvider, EnhancementSettings, CropQuad } from '../types';
+import { CardImage, ProcessingStatus, ProcessingSettings, AIProvider, EnhancementSettings, CropQuad, CardMetadataTags } from '../types';
 import { analyzeCardDamage, restoreCard } from '../services/aiService';
-import { detectCardEdges } from '../utils/edgeDetection';
+import { detectCardEdges, autoCenterQuad, calculateCardCentering } from '../utils/edgeDetection';
 import { processCardComplete } from '../utils/imageEnhancer';
+import { scanDroppedItems, unpackZipFile } from '../utils/dropzoneScanner';
 import { BatchItemEditorModal } from '../components/BatchItemEditorModal';
+import { BatchMetadataModal } from '../components/BatchMetadataModal';
+import { BatchBulkActionPanel } from '../components/BatchBulkActionPanel';
+import { BatchProcessingProgressBar } from '../components/BatchProcessingProgressBar';
+import { BatchRecoveryBanner } from '../components/BatchRecoveryBanner';
+import SettingsModal from '../components/SettingsModal';
+import { 
+  saveBatchSession, 
+  getStoredBatchSession, 
+  updateCardRecordInSession, 
+  clearBatchSession 
+} from '../utils/batchSessionStorage';
 import JSZip from 'jszip';
 
 export interface BatchCropperProps {
@@ -38,17 +53,167 @@ export interface BatchCropperProps {
   onClearInitialFiles?: () => void;
 }
 
+export interface SportsCardPreset {
+  id: string;
+  name: string;
+  badge: string;
+  desc: string;
+  settings: Partial<ProcessingSettings>;
+}
+
+export const SPORTS_CARD_PRESETS: SportsCardPreset[] = [
+  {
+    id: 'prizm_chrome',
+    name: 'Modern Prizm / Chrome / Optic',
+    badge: '🏆 HIGH POP',
+    desc: 'Punchy jersey colors, razor text & refractor prism luster',
+    settings: {
+      contrast: 1.28,
+      brightness: 0.04,
+      saturation: 1.22,
+      vibrance: 0.35,
+      sharpen: 1.10,
+      descratchThreshold: 0.12,
+      descratchRadius: 2.5,
+      microDustFilter: true,
+      antiGlare: true,
+      chromeParallelClarity: true,
+      enableDescratching: true
+    }
+  },
+  {
+    id: 'vintage_paper',
+    name: 'Vintage Paper (1952-1989)',
+    badge: '⚾ CLASSIC',
+    desc: 'Deep authentic contrast, paper fiber protection, zero artifacting',
+    settings: {
+      contrast: 1.18,
+      brightness: 0.02,
+      saturation: 1.05,
+      vibrance: 0.12,
+      sharpen: 0.75,
+      descratchThreshold: 0.16,
+      descratchRadius: 2.0,
+      microDustFilter: true,
+      antiGlare: false,
+      chromeParallelClarity: false,
+      enableDescratching: true
+    }
+  },
+  {
+    id: 'autograph_serial',
+    name: 'Autograph & Serial Number HD',
+    badge: '✍️ 1-of-1',
+    desc: 'Maximum edge micro-contrast for sharp ink strokes & stamps',
+    settings: {
+      contrast: 1.32,
+      brightness: 0.02,
+      saturation: 1.10,
+      vibrance: 0.15,
+      sharpen: 1.45,
+      descratchThreshold: 0.14,
+      descratchRadius: 2.0,
+      microDustFilter: true,
+      antiGlare: true,
+      chromeParallelClarity: true,
+      enableDescratching: false
+    }
+  },
+  {
+    id: 'slab_scuff_fix',
+    name: 'Heavy Slab / Toploader Scuff Fix',
+    badge: '🛡️ RESTORE',
+    desc: 'Deep scratch inpainting & specular reflection suppression',
+    settings: {
+      contrast: 1.20,
+      brightness: 0.05,
+      saturation: 1.15,
+      vibrance: 0.25,
+      sharpen: 0.90,
+      descratchThreshold: 0.10,
+      descratchRadius: 3.0,
+      microDustFilter: true,
+      antiGlare: true,
+      chromeParallelClarity: true,
+      enableDescratching: true
+    }
+  },
+  {
+    id: 'studio_raw',
+    name: 'Clean Studio Crisp',
+    badge: '⚡ BALANCED',
+    desc: 'Crisp balanced contrast, clean border whitening & natural tone',
+    settings: {
+      contrast: 1.16,
+      brightness: 0.03,
+      saturation: 1.12,
+      vibrance: 0.20,
+      sharpen: 0.85,
+      descratchThreshold: 0.14,
+      descratchRadius: 2.0,
+      microDustFilter: true,
+      antiGlare: true,
+      chromeParallelClarity: true,
+      enableDescratching: true
+    }
+  }
+];
+
 const BatchCropper: React.FC<BatchCropperProps> = ({ initialFiles, folderName, onClearInitialFiles }) => {
   const [cards, setCards] = useState<CardImage[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
   const [isBatchRendering, setIsBatchRendering] = useState(false);
+  const [isPaused, setIsPaused] = useState(false);
   const [batchRenderProgress, setBatchRenderProgress] = useState<{ completed: number; total: number }>({ completed: 0, total: 0 });
+  const [throughputCardsPerSec, setThroughputCardsPerSec] = useState<number>(0);
+  const [avgMsPerCard, setAvgMsPerCard] = useState<number>(0);
+  const [estimatedSecondsRemaining, setEstimatedSecondsRemaining] = useState<number | null>(null);
+  const [elapsedSeconds, setElapsedSeconds] = useState<number>(0);
+  const [activeProcessingCardName, setActiveProcessingCardName] = useState<string | null>(null);
+  const [savedSession, setSavedSession] = useState<{ cards: CardImage[]; settings?: ProcessingSettings; savedAt: number } | null>(null);
+
+  const isPausedRef = useRef<boolean>(false);
+  const isCancelledRef = useRef<boolean>(false);
   const [logs, setLogs] = useState<string[]>([]);
   const [selectedCardForView, setSelectedCardForView] = useState<CardImage | null>(null);
   const [editingCard, setEditingCard] = useState<CardImage | null>(null);
   const [previewMode, setPreviewMode] = useState<'enhanced' | 'original'>('enhanced');
+  const [isMetadataModalOpen, setIsMetadataModalOpen] = useState(false);
+  const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
+  const [activePresetId, setActivePresetId] = useState<string>('prizm_chrome');
+  const [scanQueueProgress, setScanQueueProgress] = useState<{ processed: number; total: number } | null>(null);
   
+  const handleApplyBulkMetadata = (metadata: CardMetadataTags, renameFiles: boolean) => {
+    setCards(prev => prev.map(card => ({
+      ...card,
+      metadata: {
+        ...card.metadata,
+        ...metadata,
+      }
+    })));
+
+    const tagSummary = [
+      metadata.cardSeries ? `Series: "${metadata.cardSeries}"` : null,
+      metadata.year ? `Year: "${metadata.year}"` : null,
+      metadata.setName ? `Set: "${metadata.setName}"` : null,
+      metadata.player ? `Player: "${metadata.player}"` : null,
+      metadata.gradeTarget ? `Target: "${metadata.gradeTarget}"` : null,
+    ].filter(Boolean).join(', ');
+
+    addLog(`[Metadata] Applied bulk tags to ${cards.length} cards: ${tagSummary || 'Custom notes'}`);
+  };
+
+  const handleClearBulkMetadata = () => {
+    setCards(prev => prev.map(card => ({
+      ...card,
+      metadata: undefined
+    })));
+    addLog(`[Metadata] Cleared all metadata tags from ${cards.length} cards in queue.`);
+  };
+
+  const taggedCardsCount = cards.filter(c => c.metadata && (c.metadata.cardSeries || c.metadata.year || c.metadata.setName)).length;
+
   const [settings, setSettings] = useState<ProcessingSettings>({
     aspectRatio: 2.5 / 3.5,
     jpegQuality: 95,
@@ -60,28 +225,85 @@ const BatchCropper: React.FC<BatchCropperProps> = ({ initialFiles, folderName, o
     autoCrop: true,
     aiConfig: {
       provider: AIProvider.Gemini,
-      modelId: 'gemini-2.5-flash'
+      modelId: 'gemini-3.1-flash-image'
     },
-    // Real Optical & Filter Controls
-    brightness: 0.0,
-    contrast: 1.15,
-    saturation: 1.1,
-    vibrance: 0.15,
-    sharpen: 0.4,
-    descratchThreshold: 0.14,
+    // Calibrated High-Impact Sports Card Settings (Prizm / Chrome Default)
+    brightness: 0.04,
+    contrast: 1.28,
+    saturation: 1.22,
+    vibrance: 0.35,
+    sharpen: 1.10,
+    descratchThreshold: 0.12,
     descratchRadius: 2.5,
     microDustFilter: true,
     antiGlare: true,
     chromeParallelClarity: true
   });
 
+  const handleAutoCenterAllCards = useCallback(() => {
+    setCards(prev => prev.map(c => {
+      if (!c.quad) return c;
+      const centered = autoCenterQuad(c.quad, settings.aspectRatio);
+      return {
+        ...c,
+        quad: centered
+      };
+    }));
+    addLog(`✓ Auto-centered all ${cards.length} card crops to standard 50/50 ratio.`);
+  }, [cards.length, settings.aspectRatio]);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const logsEndRef = useRef<HTMLDivElement>(null);
+
+  const applySportsPreset = (presetId: string) => {
+    const matched = SPORTS_CARD_PRESETS.find(p => p.id === presetId);
+    if (!matched) return;
+    setActivePresetId(presetId);
+    setSettings(prev => ({
+      ...prev,
+      ...matched.settings
+    }));
+    addLog(`[Preset] Applied sports card preset: "${matched.name}"`);
+  };
 
   // Auto-scroll logs
   useEffect(() => {
     logsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [logs]);
+
+  // Check for interrupted batch sessions in IndexedDB on component mount
+  useEffect(() => {
+    getStoredBatchSession().then(stored => {
+      if (stored && stored.cards.length > 0) {
+        setSavedSession(stored);
+        const completed = stored.cards.filter(c => c.status === ProcessingStatus.Completed).length;
+        addLog(`[Session Storage] Detected saved batch session with ${stored.cards.length} cards (${completed} enhanced).`);
+      }
+    });
+  }, []);
+
+  // Timer effect for elapsed processing duration
+  useEffect(() => {
+    let timerInterval: any = null;
+    if (isBatchRendering && !isPaused) {
+      timerInterval = setInterval(() => {
+        setElapsedSeconds(prev => prev + 1);
+      }, 1000);
+    }
+    return () => {
+      if (timerInterval) clearInterval(timerInterval);
+    };
+  }, [isBatchRendering, isPaused]);
+
+  // Auto-save batch cards to IndexedDB when idle
+  useEffect(() => {
+    if (cards.length > 0 && !isBatchRendering) {
+      const debounceTimer = setTimeout(() => {
+        saveBatchSession(cards, settings);
+      }, 800);
+      return () => clearTimeout(debounceTimer);
+    }
+  }, [cards, settings, isBatchRendering]);
 
   // Cleanup object URLs to prevent memory leaks
   useEffect(() => {
@@ -100,18 +322,99 @@ const BatchCropper: React.FC<BatchCropperProps> = ({ initialFiles, folderName, o
     setLogs(prev => [...prev, `[${timestamp}] ${message}`]);
   };
 
-  const processFiles = useCallback((fileList: FileList | File[]) => {
-      const MAX_SIZE_MB = 40;
-      const MAX_BATCH_SIZE = 100;
+  const handleTogglePause = () => {
+    setIsPaused(prev => {
+      const next = !prev;
+      isPausedRef.current = next;
+      addLog(next ? '⏸️ Batch processing paused by user' : '▶️ Batch processing resumed');
+      return next;
+    });
+  };
+
+  const handleCancelBatch = () => {
+    isCancelledRef.current = true;
+    isPausedRef.current = false;
+    setIsPaused(false);
+    addLog('🛑 Halt signal sent to batch workers...');
+  };
+
+  const handleResumeSession = async (autoStart = true) => {
+    if (!savedSession) return;
+    const restoredCards = savedSession.cards;
+    if (savedSession.settings) {
+      setSettings(savedSession.settings);
+    }
+    setCards(restoredCards);
+    setSavedSession(null);
+    addLog(`[Session] Restored ${restoredCards.length} cards from saved session.`);
+
+    if (autoStart) {
+      const pendingCount = restoredCards.filter(c => c.status !== ProcessingStatus.Completed).length;
+      if (pendingCount > 0) {
+        addLog(`[Session] Auto-resuming ${pendingCount} pending cards...`);
+        // Slight delay to allow state to settle
+        setTimeout(() => {
+          handleApplyEnhancementsToAll(restoredCards, true);
+        }, 100);
+      } else {
+        addLog(`[Session] All ${restoredCards.length} cards are already enhanced.`);
+      }
+    }
+  };
+
+  const handleRestoreToQueue = () => {
+    if (!savedSession) return;
+    setCards(savedSession.cards);
+    if (savedSession.settings) {
+      setSettings(savedSession.settings);
+    }
+    setSavedSession(null);
+    addLog(`[Session] Loaded ${savedSession.cards.length} cards into workspace queue for inspection.`);
+  };
+
+  const handleDiscardSession = async () => {
+    await clearBatchSession();
+    setSavedSession(null);
+    addLog('[Session] Cleared saved batch session from storage.');
+  };
+
+  const processFiles = useCallback(async (fileList: FileList | File[]) => {
+      const MAX_SIZE_MB = 50;
+      const MAX_BATCH_SIZE = 250;
       
-      const files = Array.from(fileList) as File[];
+      const rawFiles = Array.from(fileList) as File[];
+      const extractedFiles: File[] = [];
+
+      // Expand any ZIP files asynchronously with live non-blocking throttling
+      for (const file of rawFiles) {
+        if (file.name.toLowerCase().endsWith('.zip') || file.type.includes('zip')) {
+          try {
+            addLog(`📦 Extracting ZIP archive: "${file.name}"...`);
+            const unzipped = await unpackZipFile(file, file.name, {
+              chunkSize: 4,
+              onProgress: (p) => {
+                if (p.processed % 15 === 0 || p.processed === p.total) {
+                  addLog(`📦 Unpacking "${file.name}": ${p.processed}/${p.total} cards (${p.percent}%)`);
+                }
+              }
+            });
+            extractedFiles.push(...unzipped);
+            addLog(`✓ Extracted ${unzipped.length} cards from "${file.name}"`);
+          } catch (zipErr: any) {
+            addLog(`❌ Failed to extract ZIP "${file.name}": ${zipErr.message}`);
+          }
+        } else if (file.type.startsWith('image/')) {
+          extractedFiles.push(file);
+        }
+      }
       
-      if (files.length > MAX_BATCH_SIZE) {
-          addLog(`Notice: Selected ${files.length} files. Processing first ${MAX_BATCH_SIZE}.`);
+      if (extractedFiles.length > MAX_BATCH_SIZE) {
+          addLog(`Notice: Selected ${extractedFiles.length} files. Queueing first ${MAX_BATCH_SIZE}.`);
       }
 
-      const acceptedFiles = files.slice(0, MAX_BATCH_SIZE);
+      const acceptedFiles = extractedFiles.slice(0, MAX_BATCH_SIZE);
       let skippedCount = 0;
+      const newCardsToAdd: CardImage[] = [];
 
       acceptedFiles.forEach(file => {
         if (!file.type.startsWith('image/')) return;
@@ -123,44 +426,76 @@ const BatchCropper: React.FC<BatchCropperProps> = ({ initialFiles, folderName, o
         const previewUrl = URL.createObjectURL(file);
         const cardId = Math.random().toString(36).substring(2, 11);
 
-        // Probe dimensions & auto-detect quad
-        const probeImg = new Image();
-        probeImg.crossOrigin = 'anonymous';
-        probeImg.onload = () => {
-          const w = probeImg.naturalWidth || probeImg.width;
-          const h = probeImg.naturalHeight || probeImg.height;
-          const detectedQuad = detectCardEdges(probeImg, settings.aspectRatio);
-
-          setCards(prev => prev.map(c => 
-            c.id === cardId 
-              ? { 
-                  ...c, 
-                  originalWidth: w, 
-                  originalHeight: h,
-                  quad: detectedQuad
-                } 
-              : c
-          ));
-        };
-        probeImg.src = previewUrl;
-
-        const newCard: CardImage = {
+        newCardsToAdd.push({
             id: cardId,
             file,
             previewUrl,
             status: ProcessingStatus.Pending,
             originalWidth: 0,
             originalHeight: 0
+        });
+      });
+
+      if (newCardsToAdd.length > 0) {
+        // Enqueue cards into UI in a single atomic state batch
+        setCards(prev => [...prev, ...newCardsToAdd]);
+        addLog(`Added ${newCardsToAdd.length} cards to batch queue. Starting non-blocking edge analysis...`);
+
+        // Process edge detection in a throttled non-blocking worker queue (2 workers, yielding between items)
+        const queue = [...newCardsToAdd];
+        const totalToScan = queue.length;
+        let scannedCount = 0;
+        setScanQueueProgress({ processed: 0, total: totalToScan });
+
+        const scanWorker = async () => {
+          while (queue.length > 0) {
+            const item = queue.shift();
+            if (!item) break;
+
+            await new Promise<void>((resolve) => {
+              const probeImg = new Image();
+              probeImg.crossOrigin = 'anonymous';
+              probeImg.onload = () => {
+                const w = probeImg.naturalWidth || probeImg.width;
+                const h = probeImg.naturalHeight || probeImg.height;
+                const detectedQuad = detectCardEdges(probeImg, settings.aspectRatio);
+
+                setCards(prev => prev.map(c => 
+                  c.id === item.id 
+                    ? { 
+                        ...c, 
+                        originalWidth: w, 
+                        originalHeight: h,
+                        quad: detectedQuad
+                      } 
+                    : c
+                ));
+                scannedCount++;
+                setScanQueueProgress({ processed: scannedCount, total: totalToScan });
+                resolve();
+              };
+              probeImg.onerror = () => {
+                scannedCount++;
+                setScanQueueProgress({ processed: scannedCount, total: totalToScan });
+                resolve();
+              };
+              probeImg.src = item.previewUrl;
+            });
+
+            // Non-blocking yield to event loop
+            await new Promise(r => setTimeout(r, 12));
+          }
         };
 
-        setCards(prev => [...prev, newCard]);
-      });
+        Promise.all([scanWorker(), scanWorker()]).then(() => {
+          setScanQueueProgress(null);
+          addLog(`✓ Edge analysis complete for ${totalToScan} cards.`);
+        });
+      }
 
       if (skippedCount > 0) {
           addLog(`Skipped ${skippedCount} files larger than ${MAX_SIZE_MB}MB.`);
       }
-
-      addLog(`Added ${acceptedFiles.length - skippedCount} cards to batch queue.`);
   }, [settings.aspectRatio]);
 
   // Synchronize initialFiles from directory drops passed via props
@@ -192,24 +527,41 @@ const BatchCropper: React.FC<BatchCropperProps> = ({ initialFiles, folderName, o
     };
   }, [processFiles]);
 
-  const onDrop = useCallback((acceptedFiles: File[]) => {
+  const onDrop = useCallback(async (acceptedFiles: File[], fileRejections: any, event: any) => {
+    if (event?.dataTransfer) {
+      try {
+        const scanned = await scanDroppedItems(event.dataTransfer, acceptedFiles);
+        if (scanned.files.length > 0) {
+          await processFiles(scanned.files);
+          if (scanned.directoryName) {
+            addLog(`📁 Loaded "${scanned.directoryName}" (${scanned.files.length} cards)`);
+          }
+          return;
+        }
+      } catch (err: any) {
+        console.warn("Scan dropped items fallback:", err);
+      }
+    }
+
     if (acceptedFiles && acceptedFiles.length > 0) {
-      processFiles(acceptedFiles);
+      await processFiles(acceptedFiles);
     }
   }, [processFiles]);
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
     accept: {
-      'image/*': ['.png', '.jpg', '.jpeg', '.webp', '.bmp', '.tiff', '.heic', '.gif']
+      'image/*': ['.png', '.jpg', '.jpeg', '.webp', '.bmp', '.tiff', '.heic', '.gif'],
+      'application/zip': ['.zip'],
+      'application/x-zip-compressed': ['.zip']
     },
     noClick: true,
     noKeyboard: true
   });
 
-  const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileSelect = async (event: React.ChangeEvent<HTMLInputElement>) => {
     if (event.target.files) {
-        processFiles(event.target.files);
+        await processFiles(event.target.files);
     }
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
@@ -218,6 +570,10 @@ const BatchCropper: React.FC<BatchCropperProps> = ({ initialFiles, folderName, o
       if (isBatchRendering || isProcessing) {
           if (!window.confirm("Processing is active. Are you sure you want to stop and clear?")) return;
       }
+      isCancelledRef.current = true;
+      isPausedRef.current = false;
+      setIsPaused(false);
+      setIsBatchRendering(false);
       cards.forEach(c => {
           URL.revokeObjectURL(c.previewUrl);
           if (c.processedUrl && c.processedUrl.startsWith('blob:')) {
@@ -226,96 +582,179 @@ const BatchCropper: React.FC<BatchCropperProps> = ({ initialFiles, folderName, o
       });
       setCards([]);
       setSelectedCardForView(null);
-      addLog("Queue cleared. Memory released.");
+      clearBatchSession();
+      setSavedSession(null);
+      addLog("Queue cleared. Memory and storage released.");
   };
 
   /**
    * CORE BATCH FILTER & ENHANCEMENT ENGINE
-   * Processes all cards in the batch queue using real pixel transformations.
+   * Processes cards with controlled concurrency, real-time throughput metrics,
+   * live ETA estimation, pause/resume capabilities, and instant crash-proof session saving.
    */
-  const handleApplyEnhancementsToAll = async () => {
-    if (cards.length === 0 || isBatchRendering || isProcessing) return;
+  const handleApplyEnhancementsToAll = async (cardsOverride?: CardImage[], onlyPending = false) => {
+    const currentCards = cardsOverride || cards;
+    if (currentCards.length === 0 || isBatchRendering || isProcessing) return;
 
     setIsBatchRendering(true);
-    setBatchRenderProgress({ completed: 0, total: cards.length });
-    const startTime = performance.now();
-    addLog(`[Batch Enhancer] Applying active filters to all ${cards.length} cards in queue...`);
+    setIsPaused(false);
+    isPausedRef.current = false;
+    isCancelledRef.current = false;
+    setElapsedSeconds(0);
+    setThroughputCardsPerSec(0);
+    setAvgMsPerCard(0);
+    setEstimatedSecondsRemaining(null);
 
-    // Set all cards to Processing status
-    setCards(prev => prev.map(c => ({ ...c, status: ProcessingStatus.Processing })));
+    const cardsToProcess = onlyPending 
+      ? currentCards.filter(c => c.status !== ProcessingStatus.Completed)
+      : [...currentCards];
 
-    let completedCounter = 0;
+    const totalCount = currentCards.length;
+    const initialCompleted = totalCount - cardsToProcess.length;
+    let completedCounter = initialCompleted;
+    let completedInRun = 0;
 
-    const renderPromises = cards.map(async (card) => {
-      try {
-        const img = new Image();
-        img.crossOrigin = 'anonymous';
+    setBatchRenderProgress({ completed: completedCounter, total: totalCount });
+    const runStartTime = performance.now();
+    addLog(`[Batch Enhancer] Starting non-blocking enhancement for ${cardsToProcess.length} cards (${initialCompleted} already enhanced)...`);
 
-        await new Promise<void>((resolve, reject) => {
-          img.onload = () => resolve();
-          img.onerror = () => reject(new Error(`Failed to decode image data for ${card.file.name}`));
-          img.src = card.previewUrl;
-        });
-
-        // Determine effective quad
-        const effectiveQuad: CropQuad = card.quad || (settings.autoCrop 
-          ? detectCardEdges(img, settings.aspectRatio) 
-          : {
-              topLeft: { x: 0, y: 0 },
-              topRight: { x: 1, y: 0 },
-              bottomRight: { x: 1, y: 1 },
-              bottomLeft: { x: 0, y: 1 }
-            });
-
-        // Determine effective settings
-        const effectiveSettings: ProcessingSettings = {
-          ...settings,
-          ...(card.customSettings || {})
-        };
-
-        const result = await processCardComplete(img, effectiveQuad, effectiveSettings);
-
-        completedCounter++;
-        setBatchRenderProgress({ completed: completedCounter, total: cards.length });
-
-        // Update card in real-time in grid
-        setCards(prev => prev.map(c => 
-          c.id === card.id 
-            ? { 
-                ...c, 
-                status: ProcessingStatus.Completed, 
-                processedUrl: result.blobUrl,
-                originalWidth: result.width,
-                originalHeight: result.height,
-                quad: effectiveQuad
-              } 
-            : c
-        ));
-
-        addLog(`[Enhancer] ✓ Processed "${card.file.name}" (${result.width}x${result.height})`);
-        return {
-          cardId: card.id,
-          fileName: card.file.name,
-          blob: result.blob,
-          blobUrl: result.blobUrl,
-          width: result.width,
-          height: result.height
-        };
-      } catch (err: any) {
-        addLog(`[Enhancer ERROR] ✗ "${card.file.name}": ${err?.message || 'Enhancement failed'}`);
-        setCards(prev => prev.map(c => 
-          c.id === card.id ? { ...c, status: ProcessingStatus.Failed } : c
-        ));
-        return null;
+    // Set pending cards to Processing status
+    setCards(prev => prev.map(c => {
+      if (!onlyPending || c.status !== ProcessingStatus.Completed) {
+        return { ...c, status: ProcessingStatus.Processing };
       }
-    });
+      return c;
+    }));
 
-    const results = await Promise.all(renderPromises);
-    const successful = results.filter((r): r is NonNullable<typeof r> => r !== null);
-    const totalTime = Math.round(performance.now() - startTime);
+    const results: any[] = [];
+    const MAX_CONCURRENT_WORKERS = 3;
 
+    const worker = async () => {
+      while (cardsToProcess.length > 0) {
+        if (isCancelledRef.current) break;
+
+        // Yield while paused by user
+        while (isPausedRef.current && !isCancelledRef.current) {
+          await new Promise(r => setTimeout(r, 100));
+        }
+        if (isCancelledRef.current) break;
+
+        const card = cardsToProcess.shift();
+        if (!card) break;
+
+        setActiveProcessingCardName(card.file.name);
+        const cardStartTime = performance.now();
+
+        try {
+          const img = new Image();
+          img.crossOrigin = 'anonymous';
+
+          await new Promise<void>((resolve, reject) => {
+            img.onload = () => resolve();
+            img.onerror = () => reject(new Error(`Failed to decode image data for ${card.file.name}`));
+            img.src = card.previewUrl;
+          });
+
+          if (isCancelledRef.current) break;
+
+          // Determine effective quad
+          const effectiveQuad: CropQuad = card.quad || (settings.autoCrop 
+            ? detectCardEdges(img, settings.aspectRatio) 
+            : {
+                topLeft: { x: 0, y: 0 },
+                topRight: { x: 1, y: 0 },
+                bottomRight: { x: 1, y: 1 },
+                bottomLeft: { x: 0, y: 1 }
+              });
+
+          // Determine effective settings
+          const effectiveSettings: ProcessingSettings = {
+            ...settings,
+            ...(card.customSettings || {})
+          };
+
+          const result = await processCardComplete(img, effectiveQuad, effectiveSettings);
+
+          completedCounter++;
+          completedInRun++;
+          setBatchRenderProgress({ completed: completedCounter, total: totalCount });
+
+          // Update card in real-time in grid
+          setCards(prev => prev.map(c => 
+            c.id === card.id 
+              ? { 
+                  ...c, 
+                  status: ProcessingStatus.Completed, 
+                  processedUrl: result.blobUrl,
+                  originalWidth: result.width,
+                  originalHeight: result.height,
+                  quad: effectiveQuad
+                } 
+              : c
+          ));
+
+          // Real-time calculation of Throughput & Time Remaining
+          const now = performance.now();
+          const elapsedSec = (now - runStartTime) / 1000;
+          if (elapsedSec > 0.2 && completedInRun > 0) {
+            const rate = completedInRun / elapsedSec; // cards per second
+            const remaining = totalCount - completedCounter;
+            const etaSec = rate > 0 ? remaining / rate : 0;
+            const avgMs = (now - runStartTime) / completedInRun;
+            setThroughputCardsPerSec(rate);
+            setAvgMsPerCard(avgMs);
+            setEstimatedSecondsRemaining(etaSec);
+          }
+
+          // Instant persist to IndexedDB so session is crash-proof
+          updateCardRecordInSession(
+            card.id, 
+            ProcessingStatus.Completed, 
+            result.blob, 
+            result.width, 
+            result.height
+          );
+
+          addLog(`[Enhancer] ✓ Processed "${card.file.name}" (${result.width}x${result.height}) in ${Math.round(performance.now() - cardStartTime)}ms`);
+          results.push({
+            cardId: card.id,
+            fileName: card.file.name,
+            blob: result.blob,
+            blobUrl: result.blobUrl,
+            width: result.width,
+            height: result.height
+          });
+        } catch (err: any) {
+          addLog(`[Enhancer ERROR] ✗ "${card.file.name}": ${err?.message || 'Enhancement failed'}`);
+          setCards(prev => prev.map(c => 
+            c.id === card.id ? { ...c, status: ProcessingStatus.Failed } : c
+          ));
+          updateCardRecordInSession(card.id, ProcessingStatus.Failed);
+        }
+
+        // Yield main thread to prevent frame drops and keep browser smooth
+        await new Promise(r => setTimeout(r, 10));
+      }
+    };
+
+    const workerPromises = Array.from(
+      { length: Math.min(MAX_CONCURRENT_WORKERS, cardsToProcess.length + 1) }, 
+      () => worker()
+    );
+
+    await Promise.all(workerPromises);
+    const totalTime = Math.round(performance.now() - runStartTime);
+
+    setActiveProcessingCardName(null);
     setIsBatchRendering(false);
-    addLog(`[Batch Enhancer] Finished ${successful.length}/${cards.length} cards in ${totalTime}ms.`);
+    setIsPaused(false);
+    isPausedRef.current = false;
+
+    if (isCancelledRef.current) {
+      addLog(`[Batch Enhancer] Batch processing halted by user.`);
+    } else {
+      addLog(`[Batch Enhancer] Finished ${completedCounter}/${totalCount} cards in ${(totalTime / 1000).toFixed(1)}s.`);
+    }
   };
 
   /**
@@ -377,28 +816,70 @@ const BatchCropper: React.FC<BatchCropperProps> = ({ initialFiles, folderName, o
         }
 
         const safeName = card.file.name.replace(/\.[^/.]+$/, "");
-        imagesFolder.file(`enhanced_${safeName}.png`, exportBlob);
+        const meta = card.metadata;
+        let enhancedFileName = `enhanced_${safeName}.png`;
+        if (meta?.cardSeries || meta?.year || meta?.setName) {
+          const yearPrefix = meta.year ? `${meta.year}_` : '';
+          const seriesPrefix = meta.cardSeries ? `${meta.cardSeries.replace(/\s+/g, '_')}_` : '';
+          const setPrefix = meta.setName ? `${meta.setName.replace(/\s+/g, '_')}_` : '';
+          enhancedFileName = `${yearPrefix}${seriesPrefix}${setPrefix}enhanced_${safeName}.png`;
+        }
+        imagesFolder.file(enhancedFileName, exportBlob);
       });
 
       await Promise.all(exportPromises);
 
-      // Add Manifests
-      const manifestJSON = cards.map(c => ({
-        fileName: c.file.name,
-        enhancedName: `enhanced_${c.file.name.replace(/\.[^/.]+$/, "")}.png`,
-        originalSize: `${c.originalWidth || 0}x${c.originalHeight || 0}`,
-        status: c.status
-      }));
+      // Add Manifests with rich metadata tags
+      const manifestJSON = cards.map(c => {
+        const safeName = c.file.name.replace(/\.[^/.]+$/, "");
+        const meta = c.metadata;
+        let enhancedFileName = `enhanced_${safeName}.png`;
+        if (meta?.cardSeries || meta?.year || meta?.setName) {
+          const yearPrefix = meta.year ? `${meta.year}_` : '';
+          const seriesPrefix = meta.cardSeries ? `${meta.cardSeries.replace(/\s+/g, '_')}_` : '';
+          const setPrefix = meta.setName ? `${meta.setName.replace(/\s+/g, '_')}_` : '';
+          enhancedFileName = `${yearPrefix}${seriesPrefix}${setPrefix}enhanced_${safeName}.png`;
+        }
+        return {
+          fileName: c.file.name,
+          enhancedName: enhancedFileName,
+          originalSize: `${c.originalWidth || 0}x${c.originalHeight || 0}`,
+          status: c.status,
+          cardSeries: meta?.cardSeries || null,
+          year: meta?.year || null,
+          setName: meta?.setName || null,
+          player: meta?.player || null,
+          gradeTarget: meta?.gradeTarget || null,
+          notes: meta?.notes || null
+        };
+      });
       zip.file("manifest.json", JSON.stringify(manifestJSON, null, 2));
 
       const csvRows = [
-        ["Original File", "Enhanced File", "Dimensions", "Status"].join(","),
-        ...cards.map(c => [
-          `"${c.file.name}"`,
-          `"enhanced_${c.file.name.replace(/\.[^/.]+$/, "")}.png"`,
-          `"${c.originalWidth || 0}x${c.originalHeight || 0}"`,
-          `"${c.status}"`
-        ].join(","))
+        ["Original File", "Enhanced File", "Series", "Year", "Set / Parallel", "Player", "Target Grade", "Dimensions", "Status", "Notes"].join(","),
+        ...cards.map(c => {
+          const safeName = c.file.name.replace(/\.[^/.]+$/, "");
+          const meta = c.metadata;
+          let enhancedFileName = `enhanced_${safeName}.png`;
+          if (meta?.cardSeries || meta?.year || meta?.setName) {
+            const yearPrefix = meta.year ? `${meta.year}_` : '';
+            const seriesPrefix = meta.cardSeries ? `${meta.cardSeries.replace(/\s+/g, '_')}_` : '';
+            const setPrefix = meta.setName ? `${meta.setName.replace(/\s+/g, '_')}_` : '';
+            enhancedFileName = `${yearPrefix}${seriesPrefix}${setPrefix}enhanced_${safeName}.png`;
+          }
+          return [
+            `"${c.file.name}"`,
+            `"${enhancedFileName}"`,
+            `"${meta?.cardSeries || ''}"`,
+            `"${meta?.year || ''}"`,
+            `"${meta?.setName || ''}"`,
+            `"${meta?.player || ''}"`,
+            `"${meta?.gradeTarget || ''}"`,
+            `"${c.originalWidth || 0}x${c.originalHeight || 0}"`,
+            `"${c.status}"`,
+            `"${meta?.notes || ''}"`
+          ].join(",");
+        })
       ].join("\n");
       zip.file("manifest.csv", csvRows);
 
@@ -446,9 +927,17 @@ const BatchCropper: React.FC<BatchCropperProps> = ({ initialFiles, folderName, o
                  <h2 className="text-xs font-bold font-mono text-cyan-300 uppercase tracking-wider">
                    Batch Card Editor
                  </h2>
-                 <p className="text-[10px] font-mono text-slate-400">
-                   {cards.length} Cards in Queue • {completedCount} Enhanced
-                 </p>
+                 <div className="flex items-center gap-2">
+                   <p className="text-[10px] font-mono text-slate-400">
+                     {cards.length} Cards in Queue • {completedCount} Enhanced
+                   </p>
+                   {scanQueueProgress && (
+                     <span className="text-[10px] font-mono text-cyan-400 flex items-center gap-1 bg-cyan-950/80 px-2 py-0.5 rounded border border-cyan-500/40">
+                       <Loader2 size={10} className="animate-spin text-cyan-300" />
+                       Scanning: {scanQueueProgress.processed}/{scanQueueProgress.total}
+                     </span>
+                   )}
+                 </div>
                </div>
             </div>
 
@@ -462,15 +951,47 @@ const BatchCropper: React.FC<BatchCropperProps> = ({ initialFiles, folderName, o
               <span>Add Cards</span>
             </button>
 
+            <button
+              id="btn-batch-open-settings"
+              onClick={() => setIsSettingsModalOpen(true)}
+              className="px-2.5 py-1.5 rounded-md bg-slate-900/80 hover:bg-slate-800 border border-slate-700 hover:border-cyan-500/50 text-slate-300 hover:text-cyan-300 text-xs font-mono font-medium flex items-center gap-1.5 transition-colors"
+              title="Configure API Keys (Gemini, OpenRouter, Venice, OpenAI, xAI) & Railway Backend"
+            >
+              <Settings2 size={13} className="text-cyan-400" />
+              <span className="hidden sm:inline">Settings</span>
+            </button>
+
             {cards.length > 0 && (
-              <button 
-                onClick={clearAll}
-                className="px-2.5 py-1.5 rounded-md hover:bg-red-500/20 text-slate-400 hover:text-red-300 border border-slate-700 hover:border-red-500/50 text-xs font-mono transition-colors flex items-center gap-1"
-                title="Clear all cards from batch queue"
-              >
-                <Trash2 size={12} />
-                <span className="hidden md:inline">Clear</span>
-              </button>
+              <>
+                <button
+                  id="btn-auto-center-all-cards"
+                  onClick={handleAutoCenterAllCards}
+                  className="px-3 py-1.5 rounded-md bg-cyan-950/60 hover:bg-cyan-900/60 border border-cyan-500/50 text-cyan-300 text-xs font-mono font-semibold flex items-center gap-1.5 transition-colors shadow-sm"
+                  title="Square and 50/50 center crop quads for all cards in the batch queue"
+                >
+                  <Crop size={13} className="text-cyan-400" />
+                  <span>Center All (50/50)</span>
+                </button>
+
+                <button
+                  id="btn-open-batch-metadata"
+                  onClick={() => setIsMetadataModalOpen(true)}
+                  className="px-3 py-1.5 rounded-md bg-cyan-950/60 hover:bg-cyan-900/60 border border-cyan-500/50 text-cyan-300 text-xs font-mono font-semibold flex items-center gap-1.5 transition-colors shadow-sm"
+                  title="Bulk edit series, release year, player, and grading metadata for all cards in queue"
+                >
+                  <Tag size={13} className="text-cyan-400" />
+                  <span>Batch Metadata</span>
+                </button>
+
+                <button 
+                  onClick={clearAll}
+                  className="px-2.5 py-1.5 rounded-md hover:bg-red-500/20 text-slate-400 hover:text-red-300 border border-slate-700 hover:border-red-500/50 text-xs font-mono transition-colors flex items-center gap-1"
+                  title="Clear all cards from batch queue"
+                >
+                  <Trash2 size={12} />
+                  <span className="hidden md:inline">Clear</span>
+                </button>
+              </>
             )}
         </div>
 
@@ -503,7 +1024,7 @@ const BatchCropper: React.FC<BatchCropperProps> = ({ initialFiles, folderName, o
         {/* Right: Primary Batch Execution Buttons */}
         <div className="flex items-center gap-2">
             <button 
-              onClick={handleApplyEnhancementsToAll}
+              onClick={() => handleApplyEnhancementsToAll()}
               disabled={cards.length === 0 || isBatchRendering || isProcessing}
               className="px-4 py-1.5 rounded-md text-xs font-bold flex items-center gap-2 font-mono bg-cyan-400 hover:bg-cyan-300 text-slate-950 shadow-[0_0_18px_rgba(0,243,255,0.4)] disabled:opacity-40 disabled:cursor-not-allowed transition-all"
               title="Apply contrast, sharpening, descratching, and edge crop across all cards in the batch"
@@ -524,8 +1045,44 @@ const BatchCropper: React.FC<BatchCropperProps> = ({ initialFiles, folderName, o
               <span>DOWNLOAD ZIP</span>
             </button>
         </div>
-        <input type="file" multiple accept="image/*" ref={fileInputRef} className="hidden" onChange={handleFileSelect}/>
+        <input 
+          type="file" 
+          multiple 
+          accept="image/*,.zip,application/zip,application/x-zip-compressed" 
+          ref={fileInputRef} 
+          className="hidden" 
+          onChange={handleFileSelect}
+        />
       </div>
+
+      {/* Visual Time Remaining, Speed Throughput & Processing Controls Bar */}
+      <BatchProcessingProgressBar
+        isRendering={isBatchRendering}
+        isPaused={isPaused}
+        completed={batchRenderProgress.completed}
+        total={batchRenderProgress.total}
+        throughputCardsPerSec={throughputCardsPerSec}
+        avgMsPerCard={avgMsPerCard}
+        estimatedSecondsRemaining={estimatedSecondsRemaining}
+        elapsedSeconds={elapsedSeconds}
+        currentFileName={activeProcessingCardName}
+        onTogglePause={handleTogglePause}
+        onCancel={handleCancelBatch}
+      />
+
+      {/* Bulk-Action Metadata Panel: 1-Click Card Series, Year & Set Assignment Before Export */}
+      {cards.length > 0 && (
+        <BatchBulkActionPanel
+          totalCards={cards.length}
+          activeMetadataCount={taggedCardsCount}
+          onApplyMetadata={handleApplyBulkMetadata}
+          onClearMetadata={handleClearBulkMetadata}
+          onStartExport={handleDownloadBatchZip}
+          onApplyEnhancements={() => handleApplyEnhancementsToAll()}
+          isProcessing={isBatchRendering}
+          isExporting={isDownloading}
+        />
+      )}
 
       {/* Main Workspace Layout */}
       <div {...getRootProps()} className="flex-1 flex overflow-hidden relative">
@@ -537,15 +1094,27 @@ const BatchCropper: React.FC<BatchCropperProps> = ({ initialFiles, folderName, o
             <div className="p-5 rounded-2xl bg-cyan-400/20 border border-cyan-400 text-cyan-300 mb-4 shadow-[0_0_30px_rgba(0,243,255,0.6)] animate-bounce">
               <Upload className="w-12 h-12" />
             </div>
-            <h3 className="text-2xl font-bold font-mono text-cyan-300 tracking-tight">Drop Cards or Folders Here</h3>
+            <h3 className="text-2xl font-bold font-mono text-cyan-300 tracking-tight">Drop Cards, Folders or ZIPs Here</h3>
             <p className="text-sm font-mono text-slate-300 mt-2 text-center max-w-md">
-              Adding all card scans directly into the active batch enhancement queue
+              Automatically extracting image scans and loading them into the high-performance batch queue
             </p>
           </div>
         )}
 
         {/* Center Card Grid */}
         <div className="flex-1 p-5 md:p-7 overflow-y-auto relative bg-[#070b12]">
+          
+          {/* Interrupted Session Recovery Banner */}
+          {savedSession && (
+            <BatchRecoveryBanner
+              savedCards={savedSession.cards}
+              savedAt={savedSession.savedAt}
+              onResumeProcessing={() => handleResumeSession(true)}
+              onRestoreToQueue={() => handleResumeSession(false)}
+              onDiscardSession={handleDiscardSession}
+            />
+          )}
+
           {cards.length === 0 ? (
              <div 
                onClick={() => fileInputRef.current?.click()}
@@ -649,6 +1218,14 @@ const BatchCropper: React.FC<BatchCropperProps> = ({ initialFiles, folderName, o
                        <span className="text-[11px] font-mono text-cyan-200 truncate font-semibold" title={card.file.name}>
                          {card.file.name}
                        </span>
+                       {(card.metadata?.cardSeries || card.metadata?.setName) && (
+                         <span className="text-[10px] font-mono text-cyan-400 truncate flex items-center gap-1 font-semibold">
+                           <Tag size={10} className="text-cyan-400 shrink-0" />
+                           {card.metadata.year ? `${card.metadata.year} ` : ''}
+                           {card.metadata.cardSeries || ''}
+                           {card.metadata.setName ? ` [${card.metadata.setName}]` : ''}
+                         </span>
+                       )}
                        <div className="flex justify-between items-center text-[10px] font-mono text-slate-400">
                          <span>{card.originalWidth ? `${card.originalWidth}x${card.originalHeight}` : 'Loading...'}</span>
                          {card.processedUrl && (
@@ -686,6 +1263,51 @@ const BatchCropper: React.FC<BatchCropperProps> = ({ initialFiles, folderName, o
 
           <div className="p-4 space-y-4 overflow-y-auto flex-1 custom-scrollbar text-slate-200">
             
+            {/* 1-Click Sports Card Optimization Presets */}
+            <div className="p-3 bg-[#0d1424] border border-cyan-500/30 rounded-lg space-y-2 shadow-sm">
+               <div className="flex items-center justify-between mb-1">
+                  <label className="text-[11px] font-bold text-cyan-300 uppercase font-mono flex items-center gap-1.5">
+                    <Award size={13} className="text-cyan-400" /> Sports Card Presets
+                  </label>
+                  <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 font-bold">
+                    1-CLICK OPTIMIZE
+                  </span>
+               </div>
+               <p className="text-[10px] font-mono text-slate-400 leading-tight">
+                 Pre-tuned optical profiles calibrated for cards, chromium foil, vintage pulp, and slab scratches:
+               </p>
+               <div className="space-y-1.5 pt-1">
+                 {SPORTS_CARD_PRESETS.map(preset => {
+                   const isActive = activePresetId === preset.id;
+                   return (
+                     <button
+                       key={preset.id}
+                       onClick={() => applySportsPreset(preset.id)}
+                       className={`w-full text-left p-2 rounded-md border transition-all flex flex-col gap-0.5 ${
+                         isActive 
+                           ? 'bg-cyan-950/70 border-cyan-400 text-cyan-200 shadow-[0_0_12px_rgba(0,243,255,0.2)]' 
+                           : 'bg-black/40 border-slate-800 text-slate-300 hover:border-cyan-500/40 hover:bg-black/60'
+                       }`}
+                     >
+                       <div className="flex items-center justify-between">
+                         <span className="text-[11px] font-bold font-mono text-cyan-300 flex items-center gap-1">
+                           {preset.name}
+                         </span>
+                         <span className={`text-[8px] font-mono font-bold px-1 py-0.5 rounded ${
+                           isActive ? 'bg-cyan-400 text-slate-950' : 'bg-slate-800 text-slate-400'
+                         }`}>
+                           {preset.badge}
+                         </span>
+                       </div>
+                       <span className="text-[9px] font-mono text-slate-400 leading-snug">
+                         {preset.desc}
+                       </span>
+                     </button>
+                   );
+                 })}
+               </div>
+            </div>
+
             {/* Auto-Crop & Centering */}
             <div className="p-3 bg-[#0d1424] border border-cyan-500/20 rounded-lg space-y-2.5">
                <div className="flex items-center justify-between">
@@ -889,7 +1511,7 @@ const BatchCropper: React.FC<BatchCropperProps> = ({ initialFiles, folderName, o
             {/* Execution CTA in Sidebar */}
             <div className="space-y-2 pt-1">
                <button
-                 onClick={handleApplyEnhancementsToAll}
+                 onClick={() => handleApplyEnhancementsToAll()}
                  disabled={cards.length === 0 || isBatchRendering || isProcessing}
                  className="w-full py-2.5 rounded-lg bg-cyan-400 hover:bg-cyan-300 text-slate-950 font-mono font-bold text-xs flex items-center justify-center gap-2 shadow-[0_0_15px_rgba(0,243,255,0.3)] disabled:opacity-40 disabled:cursor-not-allowed transition-all"
                >
@@ -934,6 +1556,20 @@ const BatchCropper: React.FC<BatchCropperProps> = ({ initialFiles, folderName, o
           }}
         />
       )}
+
+      {/* Bulk Metadata Editor Modal */}
+      <BatchMetadataModal
+        isOpen={isMetadataModalOpen}
+        totalCards={cards.length}
+        onClose={() => setIsMetadataModalOpen(false)}
+        onApply={handleApplyBulkMetadata}
+      />
+
+      {/* Global Settings Modal */}
+      <SettingsModal
+        isOpen={isSettingsModalOpen}
+        onClose={() => setIsSettingsModalOpen(false)}
+      />
 
     </div>
   );

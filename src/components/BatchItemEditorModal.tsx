@@ -13,10 +13,11 @@ import {
   Layers, 
   Maximize2,
   Wand2,
-  AlertCircle
+  AlertCircle,
+  Award
 } from 'lucide-react';
 import { CardImage, CropQuad, ProcessingSettings, Point } from '../types';
-import { detectCardEdges } from '../utils/edgeDetection';
+import { detectCardEdges, autoCenterQuad, calculateCardCentering } from '../utils/edgeDetection';
 import { processCardComplete } from '../utils/imageEnhancer';
 import { getRotatedCanvas, rotateQuad90Step } from '../utils/imageRotation';
 
@@ -367,6 +368,38 @@ export const BatchItemEditorModal: React.FC<BatchItemEditorModalProps> = ({
     }
   };
 
+  // Mathematically square and center the quad to 50/50 ratio
+  const handleAutoCenterCard = () => {
+    const centered = autoCenterQuad(quad, localSettings.aspectRatio);
+    setQuad(centered);
+    if (overlayCanvasRef.current) {
+      drawQuadOverlay(centered, stageDimensions, overlayCanvasRef.current);
+    }
+  };
+
+  // Complete one-click Restore & Center: auto-detect borders, center to 50/50, and render enhanced preview
+  const handleRestoreAndCenterCard = async () => {
+    if (!imageElementRef.current) return;
+    const img = rotation ? getRotatedCanvas(imageElementRef.current, rotation) : imageElementRef.current;
+    const detected = detectCardEdges(img, localSettings.aspectRatio);
+    const centered = autoCenterQuad(detected, localSettings.aspectRatio);
+    setQuad(centered);
+    if (overlayCanvasRef.current) {
+      drawQuadOverlay(centered, stageDimensions, overlayCanvasRef.current);
+    }
+
+    setIsPreviewRendering(true);
+    try {
+      const result = await processCardComplete(img, centered, localSettings);
+      setLivePreviewUrl(result.blobUrl);
+      setActiveTab('preview');
+    } catch (e) {
+      console.error("Restore and center preview failed", e);
+    } finally {
+      setIsPreviewRendering(false);
+    }
+  };
+
   // Reset to full frame corners
   const handleResetFullFrame = () => {
     const fullQuad: CropQuad = {
@@ -435,6 +468,8 @@ export const BatchItemEditorModal: React.FC<BatchItemEditorModalProps> = ({
     setLocalSettings({ ...globalSettings });
     handleAutoDetectCorners();
   };
+
+  const centering = calculateCardCentering(quad);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-md p-3 md:p-6 holo-text">
@@ -517,13 +552,29 @@ export const BatchItemEditorModal: React.FC<BatchItemEditorModalProps> = ({
           <div className="lg:col-span-7 bg-black/80 flex flex-col p-4 border-b lg:border-b-0 lg:border-r border-[rgba(0,243,255,0.2)]">
             
             {/* Quick Geometry Toolbar */}
-            <div className="flex items-center justify-between pb-3 mb-2 border-b border-[rgba(0,243,255,0.15)]">
+            <div className="flex flex-wrap items-center justify-between gap-2 pb-3 mb-2 border-b border-[rgba(0,243,255,0.15)]">
               <span className="text-[10px] font-mono text-[rgba(0,243,255,0.8)] flex items-center gap-1.5">
                 <Maximize2 size={12} className="text-cyan-400" />
                 {activeTab === 'preview' ? 'GPU Shader Render Result' : 'Drag 4 Corner Pins to Crop Card'}
               </span>
 
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-1.5">
+                <button
+                  id="btn-restore-center-modal"
+                  onClick={handleRestoreAndCenterCard}
+                  className="px-2.5 py-1 bg-cyan-950/90 hover:bg-cyan-900 border border-cyan-400 text-cyan-300 rounded-xs text-[10px] font-mono transition-all flex items-center gap-1 shadow-[0_0_10px_rgba(0,243,255,0.35)] font-semibold"
+                  title="Detect boundaries, square 50/50 centering, and render GPU enhancement pass"
+                >
+                  <Sparkles size={11} className="text-cyan-300 animate-pulse" /> Restore & Center
+                </button>
+                <button
+                  id="btn-auto-center-modal"
+                  onClick={handleAutoCenterCard}
+                  className="px-2.5 py-1 bg-black/60 hover:bg-[rgba(0,243,255,0.15)] border border-[rgba(0,243,255,0.4)] text-[#00f3ff] rounded-xs text-[10px] font-mono transition-all flex items-center gap-1"
+                  title="Square quad and snap to 50/50 mathematical centering ratio"
+                >
+                  <Crop size={11} className="text-cyan-300" /> Center (50/50)
+                </button>
                 <button
                   onClick={handleAutoDetectCorners}
                   className="px-2.5 py-1 bg-black/60 hover:bg-[rgba(0,243,255,0.15)] border border-[rgba(0,243,255,0.4)] text-[#00f3ff] rounded-xs text-[10px] font-mono transition-all flex items-center gap-1"
@@ -533,17 +584,17 @@ export const BatchItemEditorModal: React.FC<BatchItemEditorModalProps> = ({
                 </button>
                 <button
                   onClick={handleRotate}
-                  className="px-2.5 py-1 bg-black/60 hover:bg-[rgba(0,243,255,0.15)] border border-[rgba(0,243,255,0.4)] text-[#00f3ff] rounded-xs text-[10px] font-mono transition-all flex items-center gap-1"
+                  className="px-2 py-1 bg-black/60 hover:bg-[rgba(0,243,255,0.15)] border border-[rgba(0,243,255,0.4)] text-[#00f3ff] rounded-xs text-[10px] font-mono transition-all flex items-center gap-1"
                   title="Rotate image 90° clockwise"
                 >
                   <RotateCw size={11} /> 90°
                 </button>
                 <button
                   onClick={handleResetFullFrame}
-                  className="px-2.5 py-1 bg-black/60 hover:bg-[rgba(0,243,255,0.15)] border border-[rgba(0,243,255,0.4)] text-[rgba(0,243,255,0.8)] rounded-xs text-[10px] font-mono transition-all flex items-center gap-1"
+                  className="px-2 py-1 bg-black/60 hover:bg-[rgba(0,243,255,0.15)] border border-[rgba(0,243,255,0.4)] text-[rgba(0,243,255,0.8)] rounded-xs text-[10px] font-mono transition-all flex items-center gap-1"
                   title="Reset corners to full frame margins"
                 >
-                  <RefreshCw size={11} /> Full Frame
+                  <RefreshCw size={11} /> Full
                 </button>
               </div>
             </div>
@@ -579,12 +630,30 @@ export const BatchItemEditorModal: React.FC<BatchItemEditorModalProps> = ({
               )}
             </div>
 
-            {/* Corner Coordinates Readout */}
-            <div className="pt-2.5 flex items-center justify-between text-[8.5px] font-mono text-[rgba(0,243,255,0.6)]">
-              <span>TL: [{quad.topLeft.x.toFixed(2)}, {quad.topLeft.y.toFixed(2)}]</span>
-              <span>TR: [{quad.topRight.x.toFixed(2)}, {quad.topRight.y.toFixed(2)}]</span>
-              <span>BR: [{quad.bottomRight.x.toFixed(2)}, {quad.bottomRight.y.toFixed(2)}]</span>
-              <span>BL: [{quad.bottomLeft.x.toFixed(2)}, {quad.bottomLeft.y.toFixed(2)}]</span>
+            {/* Centering & Corner Coordinates Readout */}
+            <div className="pt-2 flex flex-wrap items-center justify-between gap-2 text-[9px] font-mono text-[rgba(0,243,255,0.7)] border-t border-[rgba(0,243,255,0.15)] mt-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-cyan-300 font-semibold">Centering:</span>
+                <span className="bg-black/70 px-2 py-0.5 rounded border border-cyan-500/30 text-cyan-200">
+                  L/R: {centering.lrRatioText} ({centering.leftPct}% / {centering.rightPct}%)
+                </span>
+                <span className="bg-black/70 px-2 py-0.5 rounded border border-cyan-500/30 text-cyan-200">
+                  T/B: {centering.tbRatioText} ({centering.topPct}% / {centering.bottomPct}%)
+                </span>
+                <span className={`px-2 py-0.5 rounded border flex items-center gap-1 font-bold ${
+                  centering.centeringGrade.includes('10')
+                    ? 'bg-emerald-950/80 border-emerald-400/60 text-emerald-300'
+                    : 'bg-cyan-950/80 border-cyan-400/50 text-cyan-300'
+                }`}>
+                  <Award size={10} />
+                  {centering.centeringGrade}
+                </span>
+              </div>
+
+              <div className="text-[8px] text-slate-400 hidden sm:flex gap-2">
+                <span>TL: [{quad.topLeft.x.toFixed(2)}, {quad.topLeft.y.toFixed(2)}]</span>
+                <span>BR: [{quad.bottomRight.x.toFixed(2)}, {quad.bottomRight.y.toFixed(2)}]</span>
+              </div>
             </div>
           </div>
 

@@ -120,8 +120,8 @@ export function detectCardEdges(
       }
     }
 
-    // 5. Morphological Horizontal and Vertical Integration (Projection Profile)
-    // Computes foreground density across X and Y slices
+    // 5. Multi-Pass Foreground Projection Profiles
+    // Pass 1: Global column and row densities
     const colDensity = new Float32Array(w);
     const rowDensity = new Float32Array(h);
 
@@ -133,18 +133,56 @@ export function detectCardEdges(
       }
     }
 
-    // Normalize densities 0..1
     for (let x = 0; x < w; x++) colDensity[x] /= h;
     for (let y = 0; y < h; y++) rowDensity[y] /= w;
 
-    // 6. Find dominant contiguous foreground interval for X and Y
-    const xInterval = findDominantInterval(colDensity, 0.25, Math.floor(w * 0.25));
-    const yInterval = findDominantInterval(rowDensity, 0.25, Math.floor(h * 0.25));
+    // Find initial candidate intervals with adaptive thresholds and gap bridging
+    const maxCol = Math.max(...colDensity);
+    const colThresh = Math.max(0.06, maxCol * 0.35);
+    const initialXInterval = findDominantInterval(colDensity, colThresh, Math.floor(w * 0.20), Math.floor(w * 0.05));
 
-    let minX = xInterval.start;
-    let maxX = xInterval.end;
-    let minY = yInterval.start;
-    let maxY = yInterval.end;
+    // Pass 2: Re-project row density RESTRICTED to detected column interval.
+    // This is critical for flatbed scanner scans where the card is on one half of the glass,
+    // ensuring dark card artwork does not get chopped off vertically.
+    const candMinX = Math.max(0, initialXInterval.start);
+    const candMaxX = Math.min(w - 1, initialXInterval.end);
+    const candSpanX = Math.max(1, candMaxX - candMinX + 1);
+
+    const restrictedRowDensity = new Float32Array(h);
+    for (let y = 0; y < h; y++) {
+      let sum = 0;
+      for (let x = candMinX; x <= candMaxX; x++) {
+        sum += fgMask[y * w + x];
+      }
+      restrictedRowDensity[y] = sum / candSpanX;
+    }
+
+    const maxRowRestricted = Math.max(...restrictedRowDensity);
+    const rowThresh = Math.max(0.06, maxRowRestricted * 0.35);
+    const initialYInterval = findDominantInterval(restrictedRowDensity, rowThresh, Math.floor(h * 0.20), Math.floor(h * 0.05));
+
+    // Pass 3: Re-refine column density restricted to detected row bounds
+    const candMinY = Math.max(0, initialYInterval.start);
+    const candMaxY = Math.min(h - 1, initialYInterval.end);
+    const candSpanY = Math.max(1, candMaxY - candMinY + 1);
+
+    const restrictedColDensity = new Float32Array(w);
+    for (let x = 0; x < w; x++) {
+      let sum = 0;
+      for (let y = candMinY; y <= candMaxY; y++) {
+        sum += fgMask[y * w + x];
+      }
+      restrictedColDensity[x] = sum / candSpanY;
+    }
+
+    const maxColRestricted = Math.max(...restrictedColDensity);
+    const finalColThresh = Math.max(0.06, maxColRestricted * 0.35);
+    const finalXInterval = findDominantInterval(restrictedColDensity, finalColThresh, Math.floor(w * 0.20), Math.floor(w * 0.05));
+
+    let minX = finalXInterval.start;
+    let maxX = finalXInterval.end;
+    let minY = initialYInterval.start;
+    let maxY = initialYInterval.end;
 
     // Refine bounds using Sobel gradient peak scanning along edges
     minX = refineEdgeX(gradients, w, h, minX, minY, maxY, -1);
@@ -215,12 +253,14 @@ export function detectCardEdges(
 }
 
 /**
- * Finds the widest contiguous segment exceeding a threshold density.
+ * Finds the widest contiguous segment exceeding a threshold density,
+ * with gap tolerance to prevent dark card artwork, seams, or foil stripes from splitting the card.
  */
 function findDominantInterval(
   density: Float32Array,
   threshold: number,
-  minSpan: number
+  minSpan: number,
+  maxGap = 12
 ): { start: number; end: number } {
   let bestStart = 0;
   let bestEnd = density.length - 1;
@@ -229,31 +269,41 @@ function findDominantInterval(
   let inSegment = false;
   let segStart = 0;
   let segSum = 0;
+  let gapCount = 0;
 
   for (let i = 0; i < density.length; i++) {
-    if (density[i] >= threshold) {
+    const val = density[i];
+    if (val >= threshold) {
       if (!inSegment) {
         inSegment = true;
         segStart = i;
         segSum = 0;
       }
-      segSum += density[i];
+      segSum += val;
+      gapCount = 0;
     } else {
       if (inSegment) {
-        const segEnd = i - 1;
-        const span = segEnd - segStart + 1;
-        if (span >= minSpan && segSum > maxArea) {
-          maxArea = segSum;
-          bestStart = segStart;
-          bestEnd = segEnd;
+        gapCount++;
+        // Allow bridging across small dark foil or shadow gaps
+        if (gapCount <= maxGap && i < density.length - 1) {
+          segSum += val;
+        } else {
+          const segEnd = i - gapCount;
+          const span = segEnd - segStart + 1;
+          if (span >= minSpan && segSum > maxArea) {
+            maxArea = segSum;
+            bestStart = segStart;
+            bestEnd = segEnd;
+          }
+          inSegment = false;
+          gapCount = 0;
         }
-        inSegment = false;
       }
     }
   }
 
   if (inSegment) {
-    const segEnd = density.length - 1;
+    const segEnd = density.length - 1 - gapCount;
     const span = segEnd - segStart + 1;
     if (span >= minSpan && segSum > maxArea) {
       bestStart = segStart;
@@ -262,6 +312,107 @@ function findDominantInterval(
   }
 
   return { start: bestStart, end: bestEnd };
+}
+
+/**
+ * Calculates sports card border centering metrics (Left/Right & Top/Bottom ratios)
+ * and condition grade estimation (e.g. 50/50 GEM MINT 10, 55/45 MINT 9).
+ */
+export interface CardCenteringResult {
+  leftPct: number;
+  rightPct: number;
+  topPct: number;
+  bottomPct: number;
+  lrRatioText: string;
+  tbRatioText: string;
+  centeringGrade: string;
+  isCentered5050: boolean;
+}
+
+export function calculateCardCentering(quad: CropQuad): CardCenteringResult {
+  const avgLeft = (quad.topLeft.x + quad.bottomLeft.x) / 2;
+  const avgRight = 1.0 - (quad.topRight.x + quad.bottomRight.x) / 2;
+  const totalH = avgLeft + avgRight;
+  const leftPct = totalH > 0 ? Math.round((avgLeft / totalH) * 100) : 50;
+  const rightPct = 100 - leftPct;
+
+  const avgTop = (quad.topLeft.y + quad.topRight.y) / 2;
+  const avgBottom = 1.0 - (quad.bottomLeft.y + quad.bottomRight.y) / 2;
+  const totalV = avgTop + avgBottom;
+  const topPct = totalV > 0 ? Math.round((avgTop / totalV) * 100) : 50;
+  const bottomPct = 100 - topPct;
+
+  const lrDiff = Math.abs(leftPct - 50);
+  const tbDiff = Math.abs(topPct - 50);
+  const maxDiff = Math.max(lrDiff, tbDiff);
+
+  let centeringGrade = 'GEM MINT 10 (50/50)';
+  if (maxDiff <= 2) {
+    centeringGrade = 'GEM MINT 10 (50/50 - 52/48)';
+  } else if (maxDiff <= 5) {
+    centeringGrade = 'MINT 9 (55/45)';
+  } else if (maxDiff <= 10) {
+    centeringGrade = 'NEAR MINT 8 (60/40)';
+  } else if (maxDiff <= 15) {
+    centeringGrade = 'EXCELLENT 7 (65/35)';
+  } else {
+    centeringGrade = 'OFF-CENTER (< 70/30)';
+  }
+
+  return {
+    leftPct,
+    rightPct,
+    topPct,
+    bottomPct,
+    lrRatioText: `${leftPct}/${rightPct}`,
+    tbRatioText: `${topPct}/${bottomPct}`,
+    centeringGrade,
+    isCentered5050: maxDiff <= 2
+  };
+}
+
+/**
+ * Mathematically centers and squares the crop quad to the standard sports card ratio (2.5 : 3.5),
+ * eliminating off-center bias while retaining maximum card artwork coverage.
+ */
+export function autoCenterQuad(quad: CropQuad, targetRatio = 2.5 / 3.5): CropQuad {
+  const centerX = (quad.topLeft.x + quad.topRight.x + quad.bottomRight.x + quad.bottomLeft.x) / 4;
+  const centerY = (quad.topLeft.y + quad.topRight.y + quad.bottomRight.y + quad.bottomLeft.y) / 4;
+
+  const currentW = Math.max(
+    Math.hypot(quad.topRight.x - quad.topLeft.x, quad.topRight.y - quad.topLeft.y),
+    Math.hypot(quad.bottomRight.x - quad.bottomLeft.x, quad.bottomRight.y - quad.bottomLeft.y)
+  );
+  const currentH = Math.max(
+    Math.hypot(quad.bottomLeft.x - quad.topLeft.x, quad.bottomLeft.y - quad.topLeft.y),
+    Math.hypot(quad.bottomRight.x - quad.topRight.x, quad.bottomRight.y - quad.topRight.y)
+  );
+
+  let targetW = currentW;
+  let targetH = currentH;
+
+  if (targetRatio > 0) {
+    const impliedH = targetW / targetRatio;
+    if (impliedH <= 0.98) {
+      targetH = impliedH;
+    } else {
+      targetH = Math.min(0.98, currentH);
+      targetW = targetH * targetRatio;
+    }
+  }
+
+  const halfW = clamp(targetW / 2, 0.05, 0.49);
+  const halfH = clamp(targetH / 2, 0.05, 0.49);
+
+  const boundedCenterX = clamp(centerX, halfW + 0.005, 0.995 - halfW);
+  const boundedCenterY = clamp(centerY, halfH + 0.005, 0.995 - halfH);
+
+  return {
+    topLeft: { x: boundedCenterX - halfW, y: boundedCenterY - halfH },
+    topRight: { x: boundedCenterX + halfW, y: boundedCenterY - halfH },
+    bottomRight: { x: boundedCenterX + halfW, y: boundedCenterY + halfH },
+    bottomLeft: { x: boundedCenterX - halfW, y: boundedCenterY + halfH }
+  };
 }
 
 /**

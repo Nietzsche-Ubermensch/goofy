@@ -8,7 +8,7 @@ import multer from "multer";
 import fs from "fs";
 import { GoogleGenAI, Type } from "@google/genai";
 import { createServer as createViteServer } from "vite";
-import { getEffectiveKey, type AIProvider } from "./src/server/apiKeys";
+import { getEffectiveKey, extractKeyFromRequest, getServerKeyStatus, type AIProvider } from "./src/server/apiKeys";
 import { 
   APPROVED_PRESETS, 
   getAuthenticatedSession, 
@@ -33,27 +33,119 @@ const upload = multer({
   }
 });
 
-let geminiClientInstance: GoogleGenAI | null = null;
 function getGemini(apiKey?: string): GoogleGenAI {
-  const key = apiKey || process.env.GEMINI_API_KEY || process.env.API_KEY;
+  const key = apiKey || process.env.GEMINI_API_KEY || process.env.API_KEY || process.env.RAILWAY_GEMINI_API_KEY;
   if (!key) {
-    throw new Error("GEMINI_API_KEY is not configured.");
+    throw new Error("GEMINI_API_KEY is not configured. You can set it in Settings > API Keys & Backend.");
   }
-  return new GoogleGenAI({ apiKey: key });
+  return new GoogleGenAI({ 
+    apiKey: key,
+    httpOptions: {
+      headers: {
+        'User-Agent': 'aistudio-build'
+      }
+    }
+  });
 }
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
   
-  app.use(cors());
+  app.use(cors({
+    origin: true,
+    credentials: true
+  }));
   app.use(express.json({ limit: '50mb' }));
+
+  // Health check & diagnostic endpoint with Railway and Key status
+  app.get("/api/health", (req, res) => {
+    const keyStatus = getServerKeyStatus();
+    res.json({
+      status: "ok",
+      timestamp: Date.now(),
+      uptimeSeconds: process.uptime(),
+      server: "CardCrop Studio Enterprise",
+      railway: {
+        environment: process.env.RAILWAY_ENVIRONMENT || null,
+        publicDomain: process.env.RAILWAY_PUBLIC_DOMAIN || null,
+        staticUrl: process.env.RAILWAY_STATIC_URL || null,
+      },
+      features: {
+        geminiConfigured: keyStatus.Gemini,
+        enhancementPipeline: true,
+        webglClientFallback: true,
+        batchProcessing: true,
+      },
+      configuredServerKeys: keyStatus,
+      environment: {
+        nodeVersion: process.version,
+        platform: process.platform,
+        port: PORT
+      }
+    });
+  });
+
+  // API Key Validation / Test Route
+  app.post("/api/ai/validate-key", async (req, res) => {
+    const { provider } = req.body as { provider: AIProvider; apiKey?: string };
+    const effectiveKey = extractKeyFromRequest(provider, req);
+
+    if (!effectiveKey && provider !== 'Gemini') {
+      return res.status(200).json({ 
+        valid: false, 
+        error: `No API key found for ${provider}. Please enter a valid key in the settings panel.` 
+      });
+    }
+
+    try {
+      if (provider === 'Gemini') {
+        const ai = getGemini(effectiveKey || undefined);
+        const testResp = await ai.models.generateContent({
+          model: 'gemini-3.5-flash',
+          contents: 'ping',
+          config: { maxOutputTokens: 10 }
+        });
+        return res.json({ 
+          valid: true, 
+          provider: 'Gemini', 
+          modelTested: 'gemini-3.5-flash',
+          message: 'Gemini API connection verified successfully.' 
+        });
+      } else if (provider === 'OpenAI') {
+        await axios.get("https://api.openai.com/v1/models", {
+          headers: { "Authorization": `Bearer ${effectiveKey}` }
+        });
+        return res.json({ valid: true, provider: 'OpenAI', message: 'OpenAI API key verified.' });
+      } else if (provider === 'OpenRouter') {
+        await axios.get("https://openrouter.ai/api/v1/auth/key", {
+          headers: { "Authorization": `Bearer ${effectiveKey}` }
+        });
+        return res.json({ valid: true, provider: 'OpenRouter', message: 'OpenRouter API key verified.' });
+      } else if (provider === 'Venice') {
+        await axios.get("https://api.venice.ai/api/v1/models", {
+          headers: { "Authorization": `Bearer ${effectiveKey}` }
+        });
+        return res.json({ valid: true, provider: 'Venice', message: 'Venice API key verified.' });
+      } else if (provider === 'xAI') {
+        await axios.get("https://api.x.ai/v1/models", {
+          headers: { "Authorization": `Bearer ${effectiveKey}` }
+        });
+        return res.json({ valid: true, provider: 'xAI', message: 'xAI API key verified.' });
+      }
+
+      return res.status(400).json({ valid: false, error: 'Unsupported provider' });
+    } catch (err: any) {
+      const msg = err.response?.data?.error?.message || err.response?.data?.message || err.message || 'Validation failed';
+      return res.status(200).json({ valid: false, error: msg });
+    }
+  });
 
   // API Route for Proxying AI chat requests
   app.post("/api/ai/chat", async (req, res) => {
-    const { provider, modelId, messages, apiKey, stream } = req.body;
+    const { provider, modelId, messages, stream, enableSearchGrounding } = req.body;
     
-    const effectiveKey = getEffectiveKey(provider, apiKey);
+    const effectiveKey = extractKeyFromRequest(provider, req);
     if (!effectiveKey && provider !== 'Gemini') {
       return res.status(401).json({ error: `API key missing for ${provider}` });
     }
@@ -61,7 +153,7 @@ async function startServer() {
     try {
       if (provider === 'Gemini') {
         const ai = getGemini(effectiveKey || undefined);
-        const model = modelId || "gemini-3.7-flash";
+        const model = modelId || "gemini-3.5-flash";
         
         // Extract history and prompt
         const formattedHistory = (messages || [])
@@ -75,7 +167,11 @@ async function startServer() {
         const promptText = typeof lastMsg.content === 'string' ? lastMsg.content : JSON.stringify(lastMsg.content);
 
         const systemMsg = messages?.find((m: any) => m.role === 'system');
-        const systemInstruction = systemMsg ? (typeof systemMsg.content === 'string' ? systemMsg.content : JSON.stringify(systemMsg.content)) : "You are Lumina, an expert sports card restoration and grading assistant.";
+        const systemInstruction = systemMsg ? (typeof systemMsg.content === 'string' ? systemMsg.content : JSON.stringify(systemMsg.content)) : "You are Lumina, an expert sports card restoration, edge detection, and grading assistant.";
+
+        // Support Search Grounding when requested or default true for general inquiries
+        const useSearch = enableSearchGrounding !== false;
+        const tools = useSearch ? [{ googleSearch: {} }] : undefined;
 
         if (stream) {
           res.setHeader('Content-Type', 'text/event-stream');
@@ -87,14 +183,22 @@ async function startServer() {
             history: formattedHistory,
             config: {
               systemInstruction,
+              ...(tools ? { tools } : {})
             }
           });
 
           const resultStream = await chat.sendMessageStream({ message: promptText });
           for await (const chunk of resultStream) {
             const deltaText = chunk.text || "";
+            const groundingChunks = chunk.candidates?.[0]?.groundingMetadata?.groundingChunks;
+            const sources = groundingChunks?.map((c: any) => ({
+              title: c.web?.title || 'Web Citation',
+              uri: c.web?.uri || ''
+            })).filter((s: any) => !!s.uri);
+
             const payload = {
-              choices: [{ delta: { content: deltaText } }]
+              choices: [{ delta: { content: deltaText } }],
+              groundingSources: sources && sources.length > 0 ? sources : undefined
             };
             res.write(`data: ${JSON.stringify(payload)}\n\n`);
           }
@@ -106,13 +210,21 @@ async function startServer() {
             history: formattedHistory,
             config: {
               systemInstruction,
+              ...(tools ? { tools } : {})
             }
           });
           const result = await chat.sendMessage({ message: promptText });
+          const groundingChunks = result.candidates?.[0]?.groundingMetadata?.groundingChunks;
+          const sources = groundingChunks?.map((c: any) => ({
+            title: c.web?.title || 'Web Citation',
+            uri: c.web?.uri || ''
+          })).filter((s: any) => !!s.uri);
+
           return res.json({
             choices: [{
               message: { role: 'assistant', content: result.text || "" }
-            }]
+            }],
+            groundingSources: sources && sources.length > 0 ? sources : undefined
           });
         }
       }
@@ -165,8 +277,8 @@ async function startServer() {
 
   // API Route for Image Generation and Editing Proxy
   app.post("/api/ai/generate-image", async (req, res) => {
-    const { provider, modelId, prompt, size, aspectRatio, imageBase64, mimeType, apiKey } = req.body;
-    const effectiveKey = getEffectiveKey(provider, apiKey);
+    const { provider, modelId, prompt, size, aspectRatio, imageBase64, mimeType } = req.body;
+    const effectiveKey = extractKeyFromRequest(provider, req);
     if (!effectiveKey && provider !== 'Gemini') {
       return res.status(401).json({ error: "API key missing" });
     }
@@ -366,9 +478,9 @@ async function startServer() {
 
   // Dedicated Image Editing route using Gemini 3.1 Flash Image
   app.post("/api/ai/edit-image", async (req, res) => {
-    const { prompt, imageBase64, mimeType, modelId, aspectRatio, size, apiKey, provider } = req.body;
+    const { prompt, imageBase64, mimeType, modelId, aspectRatio, size, provider } = req.body;
     const selectedProvider = provider || 'Gemini';
-    const effectiveKey = getEffectiveKey(selectedProvider, apiKey);
+    const effectiveKey = extractKeyFromRequest(selectedProvider, req);
 
     if (!prompt) {
       return res.status(400).json({ error: "Prompt is required for image editing." });
@@ -449,8 +561,8 @@ async function startServer() {
 
   // API Route for Vision/Analysis Proxy
   app.post("/api/ai/analyze", async (req, res) => {
-    const { provider, modelId, imageBase64, mimeType, prompt, apiKey } = req.body;
-    const effectiveKey = getEffectiveKey(provider, apiKey);
+    const { provider, modelId, imageBase64, mimeType, prompt } = req.body;
+    const effectiveKey = extractKeyFromRequest(provider, req);
     if (!effectiveKey && provider !== 'Gemini') {
       return res.status(401).json({ error: `API key missing for ${provider}` });
     }
@@ -572,8 +684,8 @@ async function startServer() {
 
   // API Route for Image Restoration Proxy
   app.post("/api/ai/restore", async (req, res) => {
-    const { provider, modelId, imageBase64, mimeType, prompt, settings, apiKey } = req.body;
-    const effectiveKey = getEffectiveKey(provider, apiKey);
+    const { provider, modelId, imageBase64, mimeType, prompt, settings } = req.body;
+    const effectiveKey = extractKeyFromRequest(provider, req);
 
     if (!effectiveKey && provider !== 'Gemini') {
       return res.status(401).json({ error: `API key missing for ${provider}` });
@@ -582,7 +694,7 @@ async function startServer() {
     try {
       if (provider === 'Gemini') {
         const ai = getGemini(effectiveKey || undefined);
-        const model = modelId || "gemini-3.7-flash";
+        const model = modelId || "gemini-3.1-flash-image";
         
         const response = await ai.models.generateContent({
           model,

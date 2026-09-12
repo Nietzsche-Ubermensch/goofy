@@ -12,6 +12,7 @@ import { PresetsBar } from './components/PresetsBar';
 import { KeyboardShortcutsBadge } from './components/KeyboardShortcutsBadge';
 import { KeyboardShortcutsModal } from './components/KeyboardShortcutsModal';
 import { TelemetryAuditModal } from './components/TelemetryAuditModal';
+import SettingsModal from './components/SettingsModal';
 import { LiquidGlassContainer } from './components/LiquidGlassContainer';
 import Sidebar from './components/Sidebar';
 import BatchCropper from './pages/BatchCropper';
@@ -20,7 +21,28 @@ import ChatBot from './pages/ChatBot';
 import CardEnhancementSuite from './pages/CardEnhancementSuite';
 import { Dashboard } from './pages/Dashboard';
 import { scanDroppedItems } from './utils/dropzoneScanner';
-import { Sparkles, Layers, Sliders, ShieldCheck, Download, Zap, RefreshCw, LayoutGrid, Layers3, Upload, HelpCircle, Keyboard, FolderCheck, CheckCircle2, FolderInput } from 'lucide-react';
+import { 
+  Sparkles, 
+  Layers, 
+  Sliders, 
+  ShieldCheck, 
+  Download, 
+  Zap, 
+  RefreshCw, 
+  LayoutGrid, 
+  Layers3, 
+  Upload, 
+  HelpCircle, 
+  Keyboard, 
+  FolderCheck, 
+  CheckCircle2, 
+  FolderInput,
+  Menu,
+  Crop,
+  Wand2,
+  MessageSquare,
+  Settings
+} from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
 const DEFAULT_SETTINGS: EnhancementSettings = {
@@ -40,6 +62,8 @@ const DEFAULT_SETTINGS: EnhancementSettings = {
 const App: React.FC = () => {
   const [currentView, setCurrentView] = useState<'cropper' | 'batch' | 'enhancer' | 'generator' | 'chat'>('enhancer');
   const [cropperMode, setCropperMode] = useState<'single' | 'batch'>('batch');
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
 
   const [cards, setCards] = useState<CardItem[]>(getPresetCards());
   const [activeCardId, setActiveCardId] = useState<string>('preset-psa-scratch');
@@ -418,32 +442,62 @@ const App: React.FC = () => {
       {/* Sidebar Navigation */}
       <Sidebar
         currentView={currentView === 'cropper' && cropperMode === 'batch' ? 'batch' : currentView}
-        onViewChange={handleViewChange}
+        onViewChange={(view) => {
+          handleViewChange(view);
+          setIsMobileMenuOpen(false);
+        }}
         onOpenShortcuts={() => setIsShortcutsModalOpen(true)}
+        isOpen={isMobileMenuOpen}
+        onClose={() => setIsMobileMenuOpen(false)}
       />
 
       {/* Main Content Workspace Area */}
-      <div className="flex-1 pl-64 flex flex-col min-h-screen relative">
+      <div className="flex-1 md:pl-64 pl-0 pb-16 md:pb-0 flex flex-col min-h-screen relative">
         {/* Top Header Bar */}
-        <header className="sticky top-0 z-20 w-full px-6 py-3.5 border-b border-slate-800 bg-[#090d16]/90 backdrop-blur-xl flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="p-2 rounded-xl bg-indigo-600/20 text-indigo-400 border border-indigo-500/30">
+        <header className="sticky top-0 z-20 w-full px-4 sm:px-6 py-3 border-b border-slate-800 bg-[#090d16]/95 backdrop-blur-xl flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2.5 sm:gap-3">
+            {/* Mobile Menu Toggle Button */}
+            <button
+              onClick={() => setIsMobileMenuOpen(true)}
+              className="md:hidden p-2 rounded-xl bg-slate-900 border border-slate-800 text-slate-300 hover:text-white hover:bg-slate-800 transition-colors min-h-[44px] min-w-[44px] flex items-center justify-center"
+              aria-label="Open Navigation Menu"
+            >
+              <Menu size={20} />
+            </button>
+
+            <div className="p-2 rounded-xl bg-indigo-600/20 text-indigo-400 border border-indigo-500/30 hidden sm:flex items-center justify-center">
               <Sparkles className="w-4 h-4" />
             </div>
             <div>
-              <h1 className="text-sm font-bold tracking-tight text-white flex items-center gap-2">
-                Trading Card Cropper & Enhancer
+              <h1 className="text-xs sm:text-sm font-bold tracking-tight text-white flex items-center gap-2">
+                <span>CardCrop Studio</span>
+                <span className="hidden sm:inline text-slate-500">•</span>
+                <span className="hidden sm:inline text-slate-300 font-normal text-xs">
+                  {currentView === 'enhancer' ? 'AI Card Auto-Enhancer' : 
+                   currentView === 'batch' ? 'Card Batch Workbench' :
+                   currentView === 'cropper' ? 'Single Card Quad Editor' :
+                   currentView === 'generator' ? 'Card Art Generator' : 'Grading & Damage Assistant'}
+                </span>
               </h1>
-              <p className="text-[11px] text-slate-400">
-                Quad Perspective Correction • Local WebGL Shader Filtering • Surface Descratch
+              <p className="text-[10px] sm:text-[11px] text-slate-400 truncate max-w-[220px] sm:max-w-none">
+                WebGL Dual-Scale Shaders • Navier-Stokes Inpainting • Local 4K
               </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 sm:gap-3">
+            <button
+              onClick={() => setIsSettingsModalOpen(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-cyan-300 border border-slate-800 hover:border-cyan-400/40 text-xs font-mono transition-all shadow-sm active:scale-95"
+              title="API Keys & Railway Backend Settings"
+            >
+              <Settings size={14} className="text-cyan-400" />
+              <span className="hidden xs:inline sm:inline">Settings</span>
+            </button>
+
             <button
               onClick={() => setIsShortcutsModalOpen(true)}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-cyan-300 border border-slate-800 hover:border-cyan-400/40 text-xs font-mono transition-all shadow-sm active:scale-95"
+              className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-cyan-300 border border-slate-800 hover:border-cyan-400/40 text-xs font-mono transition-all shadow-sm active:scale-95"
               title="Keyboard Shortcuts & Hotkey Guide (? or Shift+/)"
             >
               <Keyboard size={14} className="text-cyan-400" />
@@ -455,25 +509,25 @@ const App: React.FC = () => {
               <div className="flex items-center p-1 bg-slate-900 border border-slate-800 rounded-xl text-xs">
                 <button
                   onClick={() => setCropperMode('single')}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all ${
+                  className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg transition-all min-h-[36px] ${
                     cropperMode === 'single'
                       ? 'bg-indigo-600 text-white font-medium shadow-sm'
                       : 'text-slate-400 hover:text-slate-200'
                   }`}
                 >
                   <LayoutGrid size={14} />
-                  <span>Single Card</span>
+                  <span className="hidden sm:inline">Single Card</span>
                 </button>
                 <button
                   onClick={() => setCropperMode('batch')}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all ${
+                  className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg transition-all min-h-[36px] ${
                     cropperMode === 'batch'
                       ? 'bg-indigo-600 text-white font-medium shadow-sm'
                       : 'text-slate-400 hover:text-slate-200'
                   }`}
                 >
                   <Layers3 size={14} />
-                  <span>Batch Queue</span>
+                  <span className="hidden sm:inline">Batch Queue</span>
                 </button>
               </div>
             )}
@@ -566,7 +620,77 @@ const App: React.FC = () => {
           </main>
         )}
 
-        {/* Telemetry & Hotkey Modals */}
+        {/* Mobile Bottom Navigation Bar (iOS / iPhone optimized) */}
+        <nav 
+          id="mobile-bottom-nav"
+          className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-[#090d16]/95 backdrop-blur-xl border-t border-slate-800/90 flex items-center justify-around px-1 pt-1.5 pb-[max(0.6rem,env(safe-area-inset-bottom))] shadow-2xl"
+          aria-label="Mobile Navigation"
+        >
+          <button
+            onClick={() => handleViewChange('enhancer')}
+            className={`flex flex-col items-center justify-center flex-1 py-1 rounded-xl transition-all min-h-[44px] ${
+              currentView === 'enhancer'
+                ? 'text-indigo-400 bg-indigo-500/10 font-bold'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <Sparkles size={18} />
+            <span className="text-[10px] font-medium tracking-tight mt-0.5">Enhance</span>
+          </button>
+
+          <button
+            onClick={() => handleViewChange('batch')}
+            className={`flex flex-col items-center justify-center flex-1 py-1 rounded-xl transition-all min-h-[44px] ${
+              currentView === 'batch' || (currentView === 'cropper' && cropperMode === 'batch')
+                ? 'text-cyan-400 bg-cyan-500/10 font-bold'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <Layers size={18} />
+            <span className="text-[10px] font-medium tracking-tight mt-0.5">Batch</span>
+          </button>
+
+          <button
+            onClick={() => {
+              setCurrentView('cropper');
+              setCropperMode('single');
+            }}
+            className={`flex flex-col items-center justify-center flex-1 py-1 rounded-xl transition-all min-h-[44px] ${
+              currentView === 'cropper' && cropperMode === 'single'
+                ? 'text-indigo-400 bg-indigo-500/10 font-bold'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <Crop size={18} />
+            <span className="text-[10px] font-medium tracking-tight mt-0.5">Crop</span>
+          </button>
+
+          <button
+            onClick={() => handleViewChange('generator')}
+            className={`flex flex-col items-center justify-center flex-1 py-1 rounded-xl transition-all min-h-[44px] ${
+              currentView === 'generator'
+                ? 'text-purple-400 bg-purple-500/10 font-bold'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <Wand2 size={18} />
+            <span className="text-[10px] font-medium tracking-tight mt-0.5">Art Gen</span>
+          </button>
+
+          <button
+            onClick={() => handleViewChange('chat')}
+            className={`flex flex-col items-center justify-center flex-1 py-1 rounded-xl transition-all min-h-[44px] ${
+              currentView === 'chat'
+                ? 'text-emerald-400 bg-emerald-500/10 font-bold'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <MessageSquare size={18} />
+            <span className="text-[10px] font-medium tracking-tight mt-0.5">Assistant</span>
+          </button>
+        </nav>
+
+        {/* Telemetry, Hotkey & Settings Modals */}
         <TelemetryAuditModal
           payload={telemetryPayload}
           isOpen={isAuditModalOpen}
@@ -576,6 +700,11 @@ const App: React.FC = () => {
         <KeyboardShortcutsModal
           isOpen={isShortcutsModalOpen}
           onClose={() => setIsShortcutsModalOpen(false)}
+        />
+
+        <SettingsModal
+          isOpen={isSettingsModalOpen}
+          onClose={() => setIsSettingsModalOpen(false)}
         />
       </div>
     </div>

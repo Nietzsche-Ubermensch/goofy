@@ -227,21 +227,21 @@ export function applyImageEnhancements(
   const imgData = ctx.getImageData(0, 0, w, h);
   const data = imgData.data;
 
-  const contrast = Math.max(0.2, Math.min(3.0, settings.contrast));
-  const brightness = Math.max(-1.0, Math.min(1.0, settings.brightness)) * 255;
-  const saturation = Math.max(0.0, Math.min(2.5, settings.saturation));
-  const vibrance = Math.max(-1.0, Math.min(1.0, settings.vibrance));
-  const sharpen = Math.max(0.0, Math.min(2.0, settings.sharpen));
+  const contrast = Math.max(0.2, Math.min(3.5, settings.contrast ?? 1.25));
+  const brightness = Math.max(-1.0, Math.min(1.0, settings.brightness ?? 0.05)) * 255;
+  const saturation = Math.max(0.0, Math.min(3.0, settings.saturation ?? 1.2));
+  const vibrance = Math.max(-1.0, Math.min(1.5, settings.vibrance ?? 0.3));
+  const sharpen = Math.max(0.0, Math.min(3.0, settings.sharpen ?? 0.85));
   const enableDescratch = settings.descratchEnabled;
   const enableDustFilter = !!settings.microDustFilter;
   const enableAntiGlare = !!settings.antiGlare;
   const enableFoilClarity = !!settings.chromeParallelClarity;
 
-  // STAGE 1: Descratching & Micro-Dust Median / Bilateral Filter
+  // STAGE 1: Descratching & Micro-Dust Median / Bilateral Flaw Inpainting
   let workingData = new Uint8ClampedArray(data);
 
   if (enableDescratch || enableDustFilter) {
-    const scratchThreshold = (settings.descratchThreshold || 0.15) * 255;
+    const scratchThreshold = (settings.descratchThreshold || 0.12) * 255;
     const radius = Math.max(1, Math.min(3, Math.round(settings.descratchRadius || 2)));
     const tempBuffer = new Uint8ClampedArray(workingData);
 
@@ -279,25 +279,25 @@ export function applyImageEnhancements(
         const avgB = sumB / count;
         const avgDiff = diffSum / count;
 
-        // Anomaly / scratch detection (high-contrast linear flaw or isolated dust pixel)
+        // Anomaly / scratch detection (high-contrast linear flaw or isolated dust speck)
         const isScratch = avgDiff > scratchThreshold;
-        const isDustSpeck = enableDustFilter && (centerLum > 240 || centerLum < 20) && avgDiff > 35;
+        const isDustSpeck = enableDustFilter && (centerLum > 230 || centerLum < 25) && avgDiff > 28;
 
         if (isScratch || isDustSpeck) {
           // Inpaint with smooth local neighbor blend
-          tempBuffer[idx] = Math.round(centerR * 0.2 + avgR * 0.8);
-          tempBuffer[idx + 1] = Math.round(centerG * 0.2 + avgG * 0.8);
-          tempBuffer[idx + 2] = Math.round(centerB * 0.2 + avgB * 0.8);
+          tempBuffer[idx] = Math.round(centerR * 0.15 + avgR * 0.85);
+          tempBuffer[idx + 1] = Math.round(centerG * 0.15 + avgG * 0.85);
+          tempBuffer[idx + 2] = Math.round(centerB * 0.15 + avgB * 0.85);
         }
       }
     }
     workingData = tempBuffer;
   }
 
-  // STAGE 2: Unsharp Masking (Sharpen Convolution)
+  // STAGE 2: Sports Card Dual-Pass Laplacian & High-Pass Text / Detail Sharpening
   if (sharpen > 0.05) {
     const sharpBuffer = new Uint8ClampedArray(workingData);
-    const amount = sharpen * 1.2;
+    const amount = sharpen * 1.6; // Dynamic punchy edge multiplier
 
     for (let y = 1; y < h - 1; y++) {
       for (let x = 1; x < w - 1; x++) {
@@ -310,51 +310,71 @@ export function applyImageEnhancements(
           const top = workingData[idx - w * 4 + c];
           const bot = workingData[idx + w * 4 + c];
 
-          const blur = (left + right + top + bot) * 0.25;
-          const diff = center - blur;
+          // 5-point discrete Laplacian convolution
+          const laplacian = 4 * center - (left + right + top + bot);
+          
+          // Micro-threshold to preserve smooth skin/background while heavily enhancing text & foil borders
+          const threshold = 1.5;
+          const enhancedVal = Math.abs(laplacian) > threshold 
+            ? center + (laplacian * amount * 0.35)
+            : center + (laplacian * amount * 0.12);
 
-          // Unsharp mask addition
-          sharpBuffer[idx + c] = Math.min(255, Math.max(0, Math.round(center + diff * amount)));
+          sharpBuffer[idx + c] = Math.min(255, Math.max(0, Math.round(enhancedVal)));
         }
       }
     }
     workingData = sharpBuffer;
   }
 
-  // STAGE 3: Color, Contrast, Brightness, Saturation, Vibrance, Anti-Glare
+  // STAGE 3: S-Curve Dynamic Contrast, Refractor Luster, Vibrance, Anti-Glare & Border Whitening
   for (let i = 0; i < workingData.length; i += 4) {
     let r = workingData[i];
     let g = workingData[i + 1];
     let b = workingData[i + 2];
 
-    // Anti-glare specular compression
+    // Anti-glare specular highlight recovery
     if (enableAntiGlare) {
       const maxChannel = Math.max(r, g, b);
-      if (maxChannel > 210) {
-        const excess = maxChannel - 210;
-        const compression = 1.0 - (excess / 45) * 0.35; // recover highlights
+      if (maxChannel > 215) {
+        const excess = maxChannel - 215;
+        const compression = 1.0 - (excess / 40) * 0.28;
         r = r * compression;
         g = g * compression;
         b = b * compression;
       }
     }
 
-    // Brightness
-    r += brightness;
-    g += brightness;
-    b += brightness;
+    // Brightness adjustment
+    if (brightness !== 0) {
+      r += brightness;
+      g += brightness;
+      b += brightness;
+    }
 
-    // Contrast: (val - 128) * contrast + 128
-    r = (r - 128) * contrast + 128;
-    g = (g - 128) * contrast + 128;
-    b = (b - 128) * contrast + 128;
+    // S-Curve Enhanced Dynamic Contrast (prevents crushed blacks and blown whites)
+    if (contrast !== 1.0) {
+      const normR = Math.max(0, Math.min(1, r / 255));
+      const normG = Math.max(0, Math.min(1, g / 255));
+      const normB = Math.max(0, Math.min(1, b / 255));
 
-    // Clamp
+      // Sigmoidal power curve
+      const sCurve = (val: number, c: number) => {
+        if (c <= 1.0) return (val - 0.5) * c + 0.5;
+        // Smooth S-Curve with protected shoulders
+        return 1.0 / (1.0 + Math.exp(-c * 3.6 * (val - 0.5)));
+      };
+
+      r = sCurve(normR, contrast) * 255;
+      g = sCurve(normG, contrast) * 255;
+      b = sCurve(normB, contrast) * 255;
+    }
+
+    // Clamp after contrast
     r = Math.min(255, Math.max(0, r));
     g = Math.min(255, Math.max(0, g));
     b = Math.min(255, Math.max(0, b));
 
-    // Saturation & Vibrance
+    // Saturation & Vibrance Calculation
     const lum = 0.299 * r + 0.587 * g + 0.114 * b;
 
     // Standard Saturation
@@ -364,17 +384,28 @@ export function applyImageEnhancements(
       b = lum + (b - lum) * saturation;
     }
 
-    // Vibrance: boost muted colors more than saturated ones
+    // High-Definition Sports Vibrance: Smart selective boost for jerseys & foil
     if (vibrance !== 0.0 || enableFoilClarity) {
-      const effectiveVibrance = vibrance + (enableFoilClarity ? 0.25 : 0.0);
+      const effectiveVibrance = vibrance + (enableFoilClarity ? 0.30 : 0.0);
       const maxC = Math.max(r, g, b);
       const minC = Math.min(r, g, b);
       const currentSat = (maxC - minC) / (maxC + 0.001);
-      const vibFactor = (1.0 - currentSat) * effectiveVibrance;
+      const vibFactor = (1.0 - currentSat) * effectiveVibrance * 1.25;
 
       r = r + (r - lum) * vibFactor;
       g = g + (g - lum) * vibFactor;
       b = b + (b - lum) * vibFactor;
+    }
+
+    // Chromium / Prizm Hologram Specular Pop
+    if (enableFoilClarity) {
+      const chromaDiff = Math.abs(r - g) + Math.abs(g - b) + Math.abs(b - r);
+      if (chromaDiff > 45 && lum > 110) {
+        // Boost rainbow refractor spectrum
+        r = r * 1.08;
+        g = g * 1.08;
+        b = b * 1.08;
+      }
     }
 
     data[i] = Math.min(255, Math.max(0, Math.round(r)));
