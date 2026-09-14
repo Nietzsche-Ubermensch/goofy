@@ -21,6 +21,11 @@ export const BatchMetadataModal: React.FC<BatchMetadataModalProps> = ({
   const [player, setPlayer] = useState('');
   const [gradeTarget, setGradeTarget] = useState('PSA 10 Gem Mint');
   const [notes, setNotes] = useState('');
+  const [sport, setSport] = useState('');
+  const [manufacturer, setManufacturer] = useState('');
+  const [printRun, setPrintRun] = useState('');
+  const [autographed, setAutographed] = useState<'Yes' | 'No' | ''>('');
+  const [price, setPrice] = useState('19.99');
   const [renameFiles, setRenameFiles] = useState(true);
 
   if (!isOpen) return null;
@@ -35,22 +40,29 @@ export const BatchMetadataModal: React.FC<BatchMetadataModalProps> = ({
         player: player.trim() || undefined,
         gradeTarget: gradeTarget || undefined,
         notes: notes.trim() || undefined,
+        sport: sport.trim() || undefined,
+        manufacturer: manufacturer.trim() || undefined,
+        printRun: printRun.trim() || undefined,
+        autographed: autographed ? (autographed as 'Yes' | 'No') : undefined,
+        price: price.trim() || undefined,
       },
       renameFiles
     );
     onClose();
   };
 
-  const applyPreset = (presetSeries: string, presetYear: string, presetSet?: string) => {
+  const applyPreset = (presetSeries: string, presetYear: string, presetSet?: string, presetMfg?: string, presetSport?: string) => {
     setCardSeries(presetSeries);
     setYear(presetYear);
     if (presetSet) setSetName(presetSet);
+    if (presetMfg) setManufacturer(presetMfg);
+    if (presetSport) setSport(presetSport);
   };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
       <div 
-        className="w-full max-w-lg bg-[#0c121e] border border-cyan-500/40 rounded-2xl p-6 shadow-2xl shadow-cyan-950/50 space-y-5 text-slate-100 font-sans"
+        className="w-full max-w-xl max-h-[90vh] overflow-y-auto bg-[#0c121e] border border-cyan-500/40 rounded-2xl p-6 shadow-2xl shadow-cyan-950/50 space-y-5 text-slate-100 font-sans"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Modal Header */}
@@ -61,10 +73,10 @@ export const BatchMetadataModal: React.FC<BatchMetadataModalProps> = ({
             </div>
             <div>
               <h3 className="text-sm font-bold font-mono text-cyan-300 uppercase tracking-wider">
-                Batch Metadata Editor
+                Batch Metadata Editor & CSV Tagging
               </h3>
               <p className="text-[11px] font-mono text-slate-400">
-                Bulk assign series, year, and grading tags across {totalCards} cards in queue
+                Bulk assign series, year, sport, and grading tags across {totalCards} cards in queue
               </p>
             </div>
           </div>
@@ -83,20 +95,21 @@ export const BatchMetadataModal: React.FC<BatchMetadataModalProps> = ({
           </label>
           <div className="flex flex-wrap gap-1.5">
             {[
-              { series: 'Topps Chrome', year: '2024', set: 'Base Refractor' },
-              { series: 'Panini Prizm', year: '2023-24', set: 'Silver Prizm' },
-              { series: 'Bowman Chrome', year: '2024', set: '1st Bowman' },
-              { series: 'Upper Deck', year: '2023-24', set: 'Young Guns' },
-              { series: 'Pokemon 151', year: '2023', set: 'Special Art Rare' },
+              { series: 'AEW Black Diamond', year: '2024', set: 'Event Logo Patches', mfg: 'Upper Deck', sport: 'Wrestling' },
+              { series: 'AEW Black Diamond', year: '2024', set: 'Squared Circle Gems', mfg: 'Upper Deck', sport: 'Wrestling' },
+              { series: 'Topps Chrome', year: '2024', set: 'Base Refractor', mfg: 'Topps', sport: 'Baseball' },
+              { series: 'Panini Prizm', year: '2023-24', set: 'Silver Prizm', mfg: 'Panini', sport: 'Basketball' },
+              { series: 'Leaf Pop Century', year: '2023', set: 'Signatures Auto', mfg: 'Leaf', sport: 'Non-Sport' },
+              { series: 'Bowman Chrome', year: '2024', set: '1st Bowman', mfg: 'Topps', sport: 'Baseball' },
             ].map((p, idx) => (
               <button
                 key={idx}
                 type="button"
-                onClick={() => applyPreset(p.series, p.year, p.set)}
+                onClick={() => applyPreset(p.series, p.year, p.set, p.mfg, p.sport)}
                 className="px-2.5 py-1 rounded-md bg-slate-900/80 hover:bg-cyan-950/50 border border-slate-700 hover:border-cyan-500/50 text-[11px] font-mono text-slate-300 hover:text-cyan-300 transition-all flex items-center gap-1"
               >
                 <Sparkles size={10} className="text-cyan-400" />
-                <span>{p.series} ({p.year}) [{p.set}]</span>
+                <span>{p.mfg ? `${p.mfg} ` : ''}{p.series} ({p.year}) [{p.set}]</span>
               </button>
             ))}
           </div>
@@ -112,7 +125,7 @@ export const BatchMetadataModal: React.FC<BatchMetadataModalProps> = ({
               <input
                 id="batch-meta-series"
                 type="text"
-                placeholder="e.g., Topps Chrome, Prizm"
+                placeholder="e.g., AEW Black Diamond, Topps Chrome"
                 value={cardSeries}
                 onChange={(e) => setCardSeries(e.target.value)}
                 className="w-full px-3.5 py-2.5 rounded-lg bg-[#070b12] border border-cyan-500/30 text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-cyan-400 font-mono text-xs"
@@ -121,34 +134,110 @@ export const BatchMetadataModal: React.FC<BatchMetadataModalProps> = ({
 
             <div className="space-y-1">
               <label className="font-mono text-slate-300 font-semibold block">
-                Set / Parallel / Insert
+                Manufacturer
               </label>
               <input
-                id="batch-meta-set"
+                id="batch-meta-mfg"
                 type="text"
-                placeholder="e.g., Base Refractor, Silver Prizm"
-                value={setName}
-                onChange={(e) => setSetName(e.target.value)}
+                placeholder="e.g., Upper Deck, Topps, Panini, Leaf"
+                value={manufacturer}
+                onChange={(e) => setManufacturer(e.target.value)}
                 className="w-full px-3.5 py-2.5 rounded-lg bg-[#070b12] border border-cyan-500/30 text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-cyan-400 font-mono text-xs"
               />
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-3 gap-3">
             <div className="space-y-1">
               <label className="font-mono text-slate-300 font-semibold block">
-                Release Year / Season
+                Set / Parallel / Insert
+              </label>
+              <input
+                id="batch-meta-set"
+                type="text"
+                placeholder="e.g., Event Logo Patches, Gems"
+                value={setName}
+                onChange={(e) => setSetName(e.target.value)}
+                className="w-full px-3.5 py-2.5 rounded-lg bg-[#070b12] border border-cyan-500/30 text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-cyan-400 font-mono text-xs"
+              />
+            </div>
+
+            <div className="space-y-1">
+              <label className="font-mono text-slate-300 font-semibold block">
+                Release Year
               </label>
               <input
                 id="batch-meta-year"
                 type="text"
-                placeholder="e.g., 2024, 1986, 1952"
+                placeholder="e.g., 2024, 2023-24"
                 value={year}
                 onChange={(e) => setYear(e.target.value)}
                 className="w-full px-3.5 py-2.5 rounded-lg bg-[#070b12] border border-cyan-500/30 text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-cyan-400 font-mono text-xs"
               />
             </div>
 
+            <div className="space-y-1">
+              <label className="font-mono text-slate-300 font-semibold block">
+                Sport / Category
+              </label>
+              <input
+                id="batch-meta-sport"
+                type="text"
+                placeholder="e.g., Wrestling, Baseball"
+                value={sport}
+                onChange={(e) => setSport(e.target.value)}
+                className="w-full px-3.5 py-2.5 rounded-lg bg-[#070b12] border border-cyan-500/30 text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-cyan-400 font-mono text-xs"
+              />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-3 gap-3">
+            <div className="space-y-1">
+              <label className="font-mono text-slate-300 font-semibold block">
+                Player / Subject
+              </label>
+              <input
+                id="batch-meta-player"
+                type="text"
+                placeholder="e.g., Hikaru Shida, Julia Hart"
+                value={player}
+                onChange={(e) => setPlayer(e.target.value)}
+                className="w-full px-3.5 py-2.5 rounded-lg bg-[#070b12] border border-cyan-500/30 text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-cyan-400 font-mono text-xs"
+              />
+            </div>
+
+            <div className="space-y-1">
+              <label className="font-mono text-slate-300 font-semibold block">
+                Print Run / Serial #
+              </label>
+              <input
+                id="batch-meta-printrun"
+                type="text"
+                placeholder="e.g., 36/99, 99, 1/1"
+                value={printRun}
+                onChange={(e) => setPrintRun(e.target.value)}
+                className="w-full px-3.5 py-2.5 rounded-lg bg-[#070b12] border border-cyan-500/30 text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-cyan-400 font-mono text-xs"
+              />
+            </div>
+
+            <div className="space-y-1">
+              <label className="font-mono text-slate-300 font-semibold block">
+                Autographed?
+              </label>
+              <select
+                id="batch-meta-auto"
+                value={autographed}
+                onChange={(e) => setAutographed(e.target.value as any)}
+                className="w-full px-3.5 py-2.5 rounded-lg bg-[#070b12] border border-cyan-500/30 text-slate-100 focus:outline-none focus:border-cyan-400 font-mono text-xs cursor-pointer"
+              >
+                <option value="">Auto-Detect from File</option>
+                <option value="Yes">Yes (Autographed)</option>
+                <option value="No">No</option>
+              </select>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1">
               <label className="font-mono text-slate-300 font-semibold block">
                 Target Grading Standard
@@ -159,6 +248,7 @@ export const BatchMetadataModal: React.FC<BatchMetadataModalProps> = ({
                 onChange={(e) => setGradeTarget(e.target.value)}
                 className="w-full px-3.5 py-2.5 rounded-lg bg-[#070b12] border border-cyan-500/30 text-slate-100 focus:outline-none focus:border-cyan-400 font-mono text-xs cursor-pointer"
               >
+                <option value="Near mint or better">Near mint or better</option>
                 <option value="PSA 10 Gem Mint">PSA 10 Gem Mint</option>
                 <option value="BGS 9.5 Pristine">BGS 9.5 Pristine</option>
                 <option value="CGC 10 Pristine">CGC 10 Pristine</option>
@@ -166,20 +256,21 @@ export const BatchMetadataModal: React.FC<BatchMetadataModalProps> = ({
                 <option value="Raw Keeper">Raw Keeper</option>
               </select>
             </div>
-          </div>
 
-          <div className="space-y-1">
-            <label className="font-mono text-slate-300 font-semibold block">
-              Player / Subject (Optional)
-            </label>
-            <input
-              id="batch-meta-player"
-              type="text"
-              placeholder="e.g., Victor Wembanyama, Michael Jordan"
-              value={player}
-              onChange={(e) => setPlayer(e.target.value)}
-              className="w-full px-3.5 py-2.5 rounded-lg bg-[#070b12] border border-cyan-500/30 text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-cyan-400 font-mono text-xs"
-            />
+            <div className="space-y-1">
+              <label className="font-mono text-slate-300 font-semibold block">
+                Marketplace Price ($)
+              </label>
+              <input
+                id="batch-meta-price"
+                type="number"
+                step="0.01"
+                placeholder="19.99"
+                value={price}
+                onChange={(e) => setPrice(e.target.value)}
+                className="w-full px-3.5 py-2.5 rounded-lg bg-[#070b12] border border-cyan-500/30 text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-cyan-400 font-mono text-xs"
+              />
+            </div>
           </div>
 
           <div className="space-y-1">
@@ -210,7 +301,7 @@ export const BatchMetadataModal: React.FC<BatchMetadataModalProps> = ({
                 Format export file names with tags
               </span>
               <span className="text-[10px] text-slate-400 font-mono">
-                Pattern: <code>[Year]_[Series]_[OriginalName].png</code>
+                Matches cropped asset file naming in CSV: <code>[Year]_[Series]_[Set]_[Player]_enhanced_[OriginalName].png</code>
               </span>
             </div>
           </label>

@@ -26,7 +26,9 @@ import {
   Maximize2,
   Tag,
   PackageCheck,
-  Award
+  Award,
+  ArrowRightLeft,
+  Columns2
 } from 'lucide-react';
 import { CardImage, ProcessingStatus, ProcessingSettings, AIProvider, EnhancementSettings, CropQuad, CardMetadataTags } from '../types';
 import { analyzeCardDamage, restoreCard } from '../services/aiService';
@@ -38,6 +40,11 @@ import { BatchMetadataModal } from '../components/BatchMetadataModal';
 import { BatchBulkActionPanel } from '../components/BatchBulkActionPanel';
 import { BatchProcessingProgressBar } from '../components/BatchProcessingProgressBar';
 import { BatchRecoveryBanner } from '../components/BatchRecoveryBanner';
+import { BatchCompareLightboxModal } from '../components/BatchCompareLightboxModal';
+import { BatchCompareBar } from '../components/BatchCompareBar';
+import { BatchMetadataCsvModal } from '../components/BatchMetadataCsvModal';
+import { getPresetCards, getTestedUserCards } from '../data/presetCards';
+import { getEnhancedFileName, generateCatalogCsv, generateEbayExchangeCsv } from '../utils/csvExport';
 import SettingsModal from '../components/SettingsModal';
 import { 
   saveBatchSession, 
@@ -178,11 +185,118 @@ const BatchCropper: React.FC<BatchCropperProps> = ({ initialFiles, folderName, o
   const [logs, setLogs] = useState<string[]>([]);
   const [selectedCardForView, setSelectedCardForView] = useState<CardImage | null>(null);
   const [editingCard, setEditingCard] = useState<CardImage | null>(null);
-  const [previewMode, setPreviewMode] = useState<'enhanced' | 'original'>('enhanced');
+  const [previewMode, setPreviewMode] = useState<'enhanced' | 'original' | 'compare'>('enhanced');
+  const [compareSliderPos, setCompareSliderPos] = useState<number>(50);
+  const [compareFormat, setCompareFormat] = useState<'split' | 'side-by-side'>('split');
+  const [isCompareLightboxOpen, setIsCompareLightboxOpen] = useState<boolean>(false);
+  const [compareActiveCardId, setCompareActiveCardId] = useState<string | null>(null);
   const [isMetadataModalOpen, setIsMetadataModalOpen] = useState(false);
+  const [isCsvModalOpen, setIsCsvModalOpen] = useState(false);
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
   const [activePresetId, setActivePresetId] = useState<string>('prizm_chrome');
   const [scanQueueProgress, setScanQueueProgress] = useState<{ processed: number; total: number } | null>(null);
+
+  // Global Keyboard Shortcuts for Compare Mode and Queue Navigation
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
+        return;
+      }
+      if (isCompareLightboxOpen || editingCard || isMetadataModalOpen || isCsvModalOpen || isSettingsModalOpen) {
+        return;
+      }
+
+      if ((e.key === 'c' || e.key === 'C') && cards.length > 0) {
+        e.preventDefault();
+        setPreviewMode(prev => prev === 'compare' ? 'enhanced' : 'compare');
+      } else if ((e.key === 'l' || e.key === 'L') && cards.length > 0) {
+        e.preventDefault();
+        setCompareActiveCardId(cards[0]?.id || null);
+        setIsCompareLightboxOpen(true);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [cards, isCompareLightboxOpen, editingCard, isMetadataModalOpen, isCsvModalOpen, isSettingsModalOpen]);
+
+  // Fast sample cards generator to test Compare Mode immediately
+  const handleLoadSampleCards = async () => {
+    addLog('Loading calibrated sample trading cards for instant comparison testing...');
+    try {
+      const presets = getPresetCards().slice(0, 3);
+      const sampleCards: CardImage[] = [];
+
+      for (const preset of presets) {
+        const res = await fetch(preset.originalUrl);
+        const blob = await res.blob();
+        const file = new File(
+          [blob],
+          `${preset.name.replace(/[^a-zA-Z0-9_-]/g, '_')}.png`,
+          { type: 'image/png' }
+        );
+        const previewUrl = URL.createObjectURL(file);
+        const id = Math.random().toString(36).substring(2, 11);
+
+        sampleCards.push({
+          id,
+          file,
+          previewUrl,
+          status: ProcessingStatus.Pending,
+          originalWidth: preset.width || 800,
+          originalHeight: preset.height || 1120,
+          quad: preset.quad,
+          metadata: {
+            cardSeries: preset.name.includes('PSA') ? 'PSA Graded Slab' : preset.name.includes('Vintage') ? 'Topps Heritage' : 'Aether Holo',
+            year: preset.name.includes('Vintage') ? '1952' : '2024',
+            setName: preset.name.includes('PSA') ? 'Gem Mint 10' : preset.name.includes('Holo') ? 'Secret Rare' : 'Base Chrome',
+            player: preset.name.includes('Vintage') ? 'Mickey Mantle' : preset.name.includes('Holo') ? 'Aether Dragon' : 'Prospect Rookie'
+          }
+        });
+      }
+
+      setCards(prev => [...prev, ...sampleCards]);
+      setPreviewMode('compare');
+      addLog(`✓ Successfully loaded ${sampleCards.length} sample cards. Switched to Compare Mode!`);
+    } catch (err) {
+      console.error('Failed to load sample cards:', err);
+      addLog('Could not load sample cards. Please drop or select image files directly.');
+    }
+  };
+
+  // Dedicated loader for verified test cards (AEW Black Diamond Hikaru Shida 0960 & Julia Hart 0968)
+  const handleLoadTestedCards = async () => {
+    addLog('Loading verified test cards (AEW Black Diamond Hikaru Shida 0960 & Julia Hart 0968)...');
+    try {
+      const testedItems = getTestedUserCards();
+      const loaded: CardImage[] = [];
+
+      for (const item of testedItems) {
+        const res = await fetch(item.originalUrl);
+        const blob = await res.blob();
+        const file = new File([blob], item.fileName, { type: 'image/png' });
+        const previewUrl = URL.createObjectURL(file);
+
+        loaded.push({
+          id: item.id,
+          file,
+          previewUrl,
+          status: ProcessingStatus.Pending,
+          originalWidth: item.width,
+          originalHeight: item.height,
+          quad: item.quad,
+          metadata: item.metadata
+        });
+      }
+
+      setCards(prev => [...prev, ...loaded]);
+      setPreviewMode('compare');
+      addLog(`✓ Loaded 2 verified test cards: Hikaru Shida Auto (#0960) and Julia Hart #36/99 (#0968)!`);
+    } catch (err: any) {
+      console.error('Failed to load tested cards:', err);
+      addLog(`Could not load tested cards: ${err?.message || err}`);
+    }
+  };
   
   const handleApplyBulkMetadata = (metadata: CardMetadataTags, renameFiles: boolean) => {
     setCards(prev => prev.map(card => ({
@@ -815,75 +929,47 @@ const BatchCropper: React.FC<BatchCropperProps> = ({ initialFiles, folderName, o
           exportBlob = result.blob;
         }
 
-        const safeName = card.file.name.replace(/\.[^/.]+$/, "");
-        const meta = card.metadata;
-        let enhancedFileName = `enhanced_${safeName}.png`;
-        if (meta?.cardSeries || meta?.year || meta?.setName) {
-          const yearPrefix = meta.year ? `${meta.year}_` : '';
-          const seriesPrefix = meta.cardSeries ? `${meta.cardSeries.replace(/\s+/g, '_')}_` : '';
-          const setPrefix = meta.setName ? `${meta.setName.replace(/\s+/g, '_')}_` : '';
-          enhancedFileName = `${yearPrefix}${seriesPrefix}${setPrefix}enhanced_${safeName}.png`;
-        }
+        const enhancedFileName = getEnhancedFileName(card, { useMetadataPrefix: true });
         imagesFolder.file(enhancedFileName, exportBlob);
       });
 
       await Promise.all(exportPromises);
 
-      // Add Manifests with rich metadata tags
+      // Add Manifests with rich metadata tags matching exact image filenames
       const manifestJSON = cards.map(c => {
-        const safeName = c.file.name.replace(/\.[^/.]+$/, "");
+        const enhancedFileName = getEnhancedFileName(c, { useMetadataPrefix: true });
         const meta = c.metadata;
-        let enhancedFileName = `enhanced_${safeName}.png`;
-        if (meta?.cardSeries || meta?.year || meta?.setName) {
-          const yearPrefix = meta.year ? `${meta.year}_` : '';
-          const seriesPrefix = meta.cardSeries ? `${meta.cardSeries.replace(/\s+/g, '_')}_` : '';
-          const setPrefix = meta.setName ? `${meta.setName.replace(/\s+/g, '_')}_` : '';
-          enhancedFileName = `${yearPrefix}${seriesPrefix}${setPrefix}enhanced_${safeName}.png`;
-        }
         return {
           fileName: c.file.name,
           enhancedName: enhancedFileName,
           originalSize: `${c.originalWidth || 0}x${c.originalHeight || 0}`,
           status: c.status,
+          sport: meta?.sport || null,
+          league: meta?.league || null,
+          manufacturer: meta?.manufacturer || null,
           cardSeries: meta?.cardSeries || null,
           year: meta?.year || null,
           setName: meta?.setName || null,
+          parallel: meta?.parallel || null,
           player: meta?.player || null,
+          autographed: meta?.autographed || null,
+          printRun: meta?.printRun || null,
           gradeTarget: meta?.gradeTarget || null,
+          price: meta?.price || null,
           notes: meta?.notes || null
         };
       });
       zip.file("manifest.json", JSON.stringify(manifestJSON, null, 2));
 
-      const csvRows = [
-        ["Original File", "Enhanced File", "Series", "Year", "Set / Parallel", "Player", "Target Grade", "Dimensions", "Status", "Notes"].join(","),
-        ...cards.map(c => {
-          const safeName = c.file.name.replace(/\.[^/.]+$/, "");
-          const meta = c.metadata;
-          let enhancedFileName = `enhanced_${safeName}.png`;
-          if (meta?.cardSeries || meta?.year || meta?.setName) {
-            const yearPrefix = meta.year ? `${meta.year}_` : '';
-            const seriesPrefix = meta.cardSeries ? `${meta.cardSeries.replace(/\s+/g, '_')}_` : '';
-            const setPrefix = meta.setName ? `${meta.setName.replace(/\s+/g, '_')}_` : '';
-            enhancedFileName = `${yearPrefix}${seriesPrefix}${setPrefix}enhanced_${safeName}.png`;
-          }
-          return [
-            `"${c.file.name}"`,
-            `"${enhancedFileName}"`,
-            `"${meta?.cardSeries || ''}"`,
-            `"${meta?.year || ''}"`,
-            `"${meta?.setName || ''}"`,
-            `"${meta?.player || ''}"`,
-            `"${meta?.gradeTarget || ''}"`,
-            `"${c.originalWidth || 0}x${c.originalHeight || 0}"`,
-            `"${c.status}"`,
-            `"${meta?.notes || ''}"`
-          ].join(",");
-        })
-      ].join("\n");
-      zip.file("manifest.csv", csvRows);
+      // 1. Structured Catalog CSV (strictly matching enhanced asset filenames)
+      const catalogCsv = generateCatalogCsv(cards, { useMetadataPrefix: true });
+      zip.file("manifest.csv", catalogCsv);
 
-      addLog("Compressing archive...");
+      // 2. eBay File Exchange CSV (Category 261328: Trading Card Singles with CustomLabel matching assets)
+      const ebayCsv = generateEbayExchangeCsv(cards, { useMetadataPrefix: true });
+      zip.file("ebay_trading_cards_cat_261328.csv", ebayCsv);
+
+      addLog("Compressing archive with matched CSV spreadsheets...");
       const zipBlob = await zip.generateAsync({
         type: "blob",
         compression: "DEFLATE",
@@ -999,6 +1085,7 @@ const BatchCropper: React.FC<BatchCropperProps> = ({ initialFiles, folderName, o
         {cards.length > 0 && (
           <div className="flex items-center gap-1 bg-black/50 p-1 rounded-lg border border-slate-800">
             <button
+              id="btn-preview-enhanced"
               onClick={() => setPreviewMode('enhanced')}
               className={`px-3 py-1 rounded text-[11px] font-mono font-medium transition-all ${
                 previewMode === 'enhanced'
@@ -1009,6 +1096,7 @@ const BatchCropper: React.FC<BatchCropperProps> = ({ initialFiles, folderName, o
               Enhanced View
             </button>
             <button
+              id="btn-preview-original"
               onClick={() => setPreviewMode('original')}
               className={`px-3 py-1 rounded text-[11px] font-mono font-medium transition-all ${
                 previewMode === 'original'
@@ -1017,6 +1105,31 @@ const BatchCropper: React.FC<BatchCropperProps> = ({ initialFiles, folderName, o
               }`}
             >
               Original Scans
+            </button>
+            <button
+              id="btn-preview-compare"
+              onClick={() => setPreviewMode('compare')}
+              className={`px-3 py-1 rounded text-[11px] font-mono font-medium flex items-center gap-1.5 transition-all ${
+                previewMode === 'compare'
+                  ? 'bg-indigo-600 text-white font-bold shadow-[0_0_12px_rgba(99,102,241,0.5)]'
+                  : 'text-slate-400 hover:text-cyan-300'
+              }`}
+              title="Toggle Simultaneous Queue Compare Mode (Key: C)"
+            >
+              <ArrowRightLeft size={12} />
+              <span>Compare Mode</span>
+            </button>
+            <button
+              id="btn-open-compare-lightbox"
+              onClick={() => {
+                setCompareActiveCardId(cards[0]?.id || null);
+                setIsCompareLightboxOpen(true);
+              }}
+              className="px-2 py-1 rounded text-[11px] font-mono text-cyan-400 hover:text-cyan-200 hover:bg-cyan-500/10 border border-cyan-500/30 transition-colors flex items-center gap-1"
+              title="Open Fullscreen Compare Lightbox (Key: L)"
+            >
+              <Maximize2 size={12} />
+              <span className="hidden xl:inline">Lightbox</span>
             </button>
           </div>
         )}
@@ -1033,6 +1146,17 @@ const BatchCropper: React.FC<BatchCropperProps> = ({ initialFiles, folderName, o
               {isBatchRendering 
                 ? `ENHANCING (${batchRenderProgress.completed}/${batchRenderProgress.total})...` 
                 : 'APPLY ENHANCEMENTS TO ALL'}
+            </button>
+
+            <button 
+              id="btn-topbar-export-csv"
+              onClick={() => setIsCsvModalOpen(true)}
+              disabled={cards.length === 0}
+              className="px-3.5 py-1.5 rounded-md text-xs font-bold flex items-center gap-1.5 font-mono bg-emerald-600 hover:bg-emerald-500 text-white shadow-[0_0_15px_rgba(16,185,129,0.3)] disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+              title="Export structured CSV metadata spreadsheet matching cropped image filenames (Catalog & eBay Cat #261328)"
+            >
+              <FileSpreadsheet size={14} />
+              <span className="hidden sm:inline">EXPORT CSV</span>
             </button>
 
             <button 
@@ -1079,8 +1203,27 @@ const BatchCropper: React.FC<BatchCropperProps> = ({ initialFiles, folderName, o
           onClearMetadata={handleClearBulkMetadata}
           onStartExport={handleDownloadBatchZip}
           onApplyEnhancements={() => handleApplyEnhancementsToAll()}
+          onOpenCsvExport={() => setIsCsvModalOpen(true)}
           isProcessing={isBatchRendering}
           isExporting={isDownloading}
+        />
+      )}
+
+      {/* Compare Mode Queue Toolbar: Synchronized Slider, Layout Switcher & Lightbox Launch */}
+      {cards.length > 0 && previewMode === 'compare' && (
+        <BatchCompareBar
+          totalCards={cards.length}
+          enhancedCount={cards.filter(c => c.status === ProcessingStatus.Completed).length}
+          sliderPos={compareSliderPos}
+          onSliderChange={setCompareSliderPos}
+          compareFormat={compareFormat}
+          onFormatChange={setCompareFormat}
+          onOpenLightbox={() => {
+            setCompareActiveCardId(cards[0]?.id || null);
+            setIsCompareLightboxOpen(true);
+          }}
+          onEnhanceAllPending={() => handleApplyEnhancementsToAll(undefined, true)}
+          isProcessing={isBatchRendering}
         />
       )}
 
@@ -1128,8 +1271,9 @@ const BatchCropper: React.FC<BatchCropperProps> = ({ initialFiles, folderName, o
                  Batch enhance contrast, remove scratches & scanner dust, sharpen details, and auto-crop standard trading cards in full resolution.
                </p>
                
-               <div className="mt-6 flex items-center gap-3">
+               <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
                  <button
+                   id="btn-select-cards"
                    onClick={(e) => {
                      e.stopPropagation();
                      fileInputRef.current?.click();
@@ -1138,11 +1282,36 @@ const BatchCropper: React.FC<BatchCropperProps> = ({ initialFiles, folderName, o
                  >
                    <Upload size={16} /> Select Card Images
                  </button>
+
+                 <button
+                   id="btn-load-sample-cards"
+                   onClick={(e) => {
+                     e.stopPropagation();
+                     handleLoadSampleCards();
+                   }}
+                   className="px-4 py-2.5 bg-slate-900 hover:bg-slate-800 border border-cyan-500/40 text-cyan-300 font-bold rounded-lg font-mono text-xs transition-all flex items-center gap-2 shadow-sm"
+                   title="Load 3 sample sports cards (PSA Slab, 1952 Mantle, Holographic) to test batch compare instantly"
+                 >
+                   <Sparkles size={15} /> Load 3 Sample Cards
+                 </button>
+
+                 <button
+                   id="btn-load-tested-cards"
+                   onClick={(e) => {
+                     e.stopPropagation();
+                     handleLoadTestedCards();
+                   }}
+                   className="px-4 py-2.5 bg-emerald-950/80 hover:bg-emerald-900 border border-emerald-500/50 text-emerald-300 font-bold rounded-lg font-mono text-xs transition-all flex items-center gap-2 shadow-sm"
+                   title="Load verified AEW Black Diamond test cards (Hikaru Shida Auto #0960 & Julia Hart #0968)"
+                 >
+                   <CheckCircle2 size={15} className="text-emerald-400" /> Load Tested Cards (AEW 0960 & 0968)
+                 </button>
                </div>
              </div>
           ) : (
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4 relative z-0">
               {cards.map(card => {
+                const isCompare = previewMode === 'compare';
                 const currentImgSrc = (previewMode === 'enhanced' && card.processedUrl) 
                   ? card.processedUrl 
                   : card.previewUrl;
@@ -1150,36 +1319,101 @@ const BatchCropper: React.FC<BatchCropperProps> = ({ initialFiles, folderName, o
                 return (
                   <div 
                     key={card.id} 
-                    className="group relative bg-[#0d1424] border border-cyan-500/25 hover:border-cyan-400 rounded-lg overflow-hidden shadow-lg hover:shadow-[0_4px_25px_rgba(0,243,255,0.25)] transition-all flex flex-col cursor-pointer"
-                    onClick={() => setEditingCard(card)}
+                    id={`card-item-${card.id}`}
+                    className={`group relative bg-[#0d1424] rounded-lg overflow-hidden shadow-lg transition-all flex flex-col cursor-pointer ${
+                      isCompare 
+                        ? 'border-2 border-indigo-500/50 hover:border-cyan-400 hover:shadow-[0_4px_25px_rgba(99,102,241,0.35)]' 
+                        : 'border border-cyan-500/25 hover:border-cyan-400 hover:shadow-[0_4px_25px_rgba(0,243,255,0.25)]'
+                    }`}
+                    onClick={() => {
+                      if (isCompare) {
+                        setCompareActiveCardId(card.id);
+                        setIsCompareLightboxOpen(true);
+                      } else {
+                        setEditingCard(card);
+                      }
+                    }}
                   >
-                    <div className="aspect-[3/4] relative bg-black/80 p-2 flex items-center justify-center overflow-hidden">
-                      <img 
-                        src={currentImgSrc} 
-                        alt={card.file.name} 
-                        className={`w-full h-full object-contain rounded transition-all ${
-                          card.status === ProcessingStatus.Processing ? 'opacity-50 blur-sm scale-[0.98]' : 'scale-100'
-                        }`} 
-                      />
+                    <div className="aspect-[3/4] relative bg-black/80 p-2 flex items-center justify-center overflow-hidden select-none">
+                      
+                      {/* Compare Mode Split Curtain View */}
+                      {isCompare && compareFormat === 'split' ? (
+                        <div className="relative w-full h-full flex items-center justify-center overflow-hidden">
+                          {/* Background: Enhanced / Cropped */}
+                          <img 
+                            src={card.processedUrl || card.previewUrl} 
+                            alt="Enhanced" 
+                            className="w-full h-full object-contain rounded pointer-events-none" 
+                          />
+                          {/* Foreground: Raw Original Scan (Clipped to slider position) */}
+                          <div 
+                            className="absolute inset-0 overflow-hidden pointer-events-none flex items-center justify-center"
+                            style={{
+                              clipPath: `polygon(0 0, ${compareSliderPos}% 0, ${compareSliderPos}% 100%, 0 100%)`
+                            }}
+                          >
+                            <img 
+                              src={card.previewUrl} 
+                              alt="Original" 
+                              className="w-full h-full object-contain rounded" 
+                            />
+                          </div>
+                          {/* Neon Cyan Dividing Curtain Line */}
+                          <div 
+                            className="absolute top-0 bottom-0 w-0.5 bg-cyan-400 pointer-events-none shadow-[0_0_8px_#00f3ff] z-10"
+                            style={{ left: `${compareSliderPos}%` }}
+                          />
+                          {/* Top Tag Badges */}
+                          <div className="absolute top-1 left-1 z-10 bg-black/80 border border-slate-700 text-slate-300 px-1 py-0.5 rounded text-[8px] font-mono font-bold">
+                            ORIG
+                          </div>
+                          <div className="absolute top-1 right-1 z-10 bg-emerald-500/90 text-slate-950 px-1 py-0.5 rounded text-[8px] font-mono font-black">
+                            ENH
+                          </div>
+                        </div>
+                      ) : isCompare && compareFormat === 'side-by-side' ? (
+                        /* Compare Mode Side-by-Side Dual View */
+                        <div className="w-full h-full grid grid-cols-2 gap-1 p-0.5">
+                          <div className="relative w-full h-full bg-black/60 rounded flex items-center justify-center overflow-hidden border border-slate-800">
+                            <img src={card.previewUrl} alt="Original" className="max-w-full max-h-full object-contain" />
+                            <span className="absolute top-0.5 left-0.5 bg-black/80 text-slate-300 px-1 py-0.2 rounded text-[7px] font-mono font-bold">ORIG</span>
+                          </div>
+                          <div className="relative w-full h-full bg-black/60 rounded flex items-center justify-center overflow-hidden border border-cyan-500/40">
+                            <img src={card.processedUrl || card.previewUrl} alt="Enhanced" className="max-w-full max-h-full object-contain" />
+                            <span className="absolute top-0.5 right-0.5 bg-emerald-500 text-slate-950 px-1 py-0.2 rounded text-[7px] font-mono font-bold">ENH</span>
+                          </div>
+                        </div>
+                      ) : (
+                        /* Standard Single View (Enhanced or Original) */
+                        <img 
+                          src={currentImgSrc} 
+                          alt={card.file.name} 
+                          className={`w-full h-full object-contain rounded transition-all ${
+                            card.status === ProcessingStatus.Processing ? 'opacity-50 blur-sm scale-[0.98]' : 'scale-100'
+                          }`} 
+                        />
+                      )}
                       
                       {/* Status Badges */}
-                      <div className="absolute top-2 left-2 flex flex-col gap-1 z-10">
-                           {card.status === ProcessingStatus.Completed && (
-                               <div className="bg-emerald-500/90 text-slate-950 px-1.5 py-0.5 rounded text-[10px] font-bold font-mono flex items-center gap-1 shadow-[0_0_8px_rgba(16,185,129,0.5)]">
-                                   <CheckCircle2 size={11} /> ENHANCED
-                               </div>
-                           )}
-                           {card.status === ProcessingStatus.Processing && (
-                               <div className="bg-cyan-500/90 text-slate-950 px-1.5 py-0.5 rounded text-[10px] font-bold font-mono flex items-center gap-1 animate-pulse">
-                                   <Loader2 size={11} className="animate-spin" /> WORKING
-                               </div>
-                           )}
-                           {card.status === ProcessingStatus.Failed && (
-                               <div className="bg-red-500 text-white px-1.5 py-0.5 rounded text-[10px] font-bold font-mono">
-                                   FAILED
-                               </div>
-                           )}
-                      </div>
+                      {!isCompare && (
+                        <div className="absolute top-2 left-2 flex flex-col gap-1 z-10">
+                             {card.status === ProcessingStatus.Completed && (
+                                 <div className="bg-emerald-500/90 text-slate-950 px-1.5 py-0.5 rounded text-[10px] font-bold font-mono flex items-center gap-1 shadow-[0_0_8px_rgba(16,185,129,0.5)]">
+                                     <CheckCircle2 size={11} /> ENHANCED
+                                 </div>
+                             )}
+                             {card.status === ProcessingStatus.Processing && (
+                                 <div className="bg-cyan-500/90 text-slate-950 px-1.5 py-0.5 rounded text-[10px] font-bold font-mono flex items-center gap-1 animate-pulse">
+                                     <Loader2 size={11} className="animate-spin" /> WORKING
+                                 </div>
+                             )}
+                             {card.status === ProcessingStatus.Failed && (
+                                 <div className="bg-red-500 text-white px-1.5 py-0.5 rounded text-[10px] font-bold font-mono">
+                                     FAILED
+                                 </div>
+                             )}
+                        </div>
+                      )}
 
                       {/* Top Right Quick Delete */}
                       <button 
@@ -1199,16 +1433,28 @@ const BatchCropper: React.FC<BatchCropperProps> = ({ initialFiles, folderName, o
                         <X size={12} />
                       </button>
 
-                      {/* Bottom Action Bar */}
+                      {/* Bottom Action Bar on Hover */}
                       <div className="absolute bottom-2 left-2 right-2 flex items-center justify-between opacity-0 group-hover:opacity-100 transition-all z-10 gap-1.5">
+                        <button 
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setCompareActiveCardId(card.id);
+                            setIsCompareLightboxOpen(true);
+                          }}
+                          className="flex-1 bg-indigo-600 hover:bg-indigo-500 text-white py-1 px-1.5 rounded text-[10px] font-mono font-bold flex items-center justify-center gap-1 shadow-md transition-colors"
+                          title="Open in Compare Lightbox"
+                        >
+                          <Maximize2 size={11} /> Compare
+                        </button>
                         <button 
                           onClick={(e) => {
                             e.stopPropagation();
                             setEditingCard(card);
                           }}
-                          className="flex-1 bg-cyan-500 hover:bg-cyan-400 text-slate-950 py-1 px-2 rounded text-[10px] font-mono font-bold flex items-center justify-center gap-1 shadow-md transition-colors"
+                          className="flex-1 bg-cyan-500 hover:bg-cyan-400 text-slate-950 py-1 px-1.5 rounded text-[10px] font-mono font-bold flex items-center justify-center gap-1 shadow-md transition-colors"
+                          title="Fine-tune edge quad crop"
                         >
-                          <Crop size={11} /> Fine-Tune
+                          <Crop size={11} /> Quad
                         </button>
                       </div>
                     </div>
@@ -1228,8 +1474,10 @@ const BatchCropper: React.FC<BatchCropperProps> = ({ initialFiles, folderName, o
                        )}
                        <div className="flex justify-between items-center text-[10px] font-mono text-slate-400">
                          <span>{card.originalWidth ? `${card.originalWidth}x${card.originalHeight}` : 'Loading...'}</span>
-                         {card.processedUrl && (
+                         {card.processedUrl ? (
                            <span className="text-emerald-400 font-bold">100% High-Res</span>
+                         ) : (
+                           <span className="text-amber-400/80 font-mono text-[9px]">Pending</span>
                          )}
                        </div>
                     </div>
@@ -1557,12 +1805,40 @@ const BatchCropper: React.FC<BatchCropperProps> = ({ initialFiles, folderName, o
         />
       )}
 
+      {/* Fullscreen Multi-Card Compare Lightbox Modal */}
+      {isCompareLightboxOpen && cards.length > 0 && (
+        <BatchCompareLightboxModal
+          cards={cards}
+          activeCardId={compareActiveCardId || cards[0].id}
+          isOpen={isCompareLightboxOpen}
+          onClose={() => setIsCompareLightboxOpen(false)}
+          onSelectCard={(id) => setCompareActiveCardId(id)}
+          onOpenEditor={(card) => {
+            setEditingCard(card);
+            setIsCompareLightboxOpen(false);
+          }}
+          onUpdateCard={(updatedCard) => {
+            setCards(prev => prev.map(c => c.id === updatedCard.id ? updatedCard : c));
+          }}
+          globalSettings={settings}
+          onEnhanceAllPending={() => handleApplyEnhancementsToAll(undefined, true)}
+        />
+      )}
+
       {/* Bulk Metadata Editor Modal */}
       <BatchMetadataModal
         isOpen={isMetadataModalOpen}
         totalCards={cards.length}
         onClose={() => setIsMetadataModalOpen(false)}
         onApply={handleApplyBulkMetadata}
+      />
+
+      {/* Batch Metadata CSV Export Modal (Catalog & eBay Cat #261328) */}
+      <BatchMetadataCsvModal
+        isOpen={isCsvModalOpen}
+        cards={cards}
+        onClose={() => setIsCsvModalOpen(false)}
+        onDownloadZip={handleDownloadBatchZip}
       />
 
       {/* Global Settings Modal */}

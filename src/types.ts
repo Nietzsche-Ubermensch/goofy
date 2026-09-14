@@ -155,6 +155,17 @@ export interface CardMetadataTags {
   player?: string;
   gradeTarget?: string;
   notes?: string;
+  // Extended marketplace and collection attributes
+  sport?: string;
+  manufacturer?: string;
+  parallel?: string;
+  cardNumber?: string;
+  printRun?: string;
+  autographed?: 'Yes' | 'No' | boolean;
+  league?: string;
+  team?: string;
+  condition?: string;
+  price?: string | number;
 }
 
 export interface CardImage {

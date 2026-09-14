@@ -83,6 +83,20 @@ const SHORTCUT_LIST: ShortcutItem[] = [
     detail: 'Restores default contrast, sharpening, saturation, and descratch settings.',
     badgeColor: 'border-amber-500/40 text-amber-300 bg-amber-500/10'
   },
+  {
+    keys: ['C'],
+    description: 'Toggle Batch Compare Mode',
+    category: 'actions',
+    detail: 'Switches the queue between enhanced, original, and synchronized split compare view.',
+    badgeColor: 'border-indigo-500/40 text-indigo-300 bg-indigo-500/10'
+  },
+  {
+    keys: ['L'],
+    description: 'Open Fullscreen Compare Lightbox',
+    category: 'actions',
+    detail: 'Launches multi-card comparison modal with split-slider, side-by-side, flip, and diff analysis.',
+    badgeColor: 'border-cyan-500/40 text-cyan-300 bg-cyan-500/10'
+  },
 
   // Deskewing & Rotation
   {

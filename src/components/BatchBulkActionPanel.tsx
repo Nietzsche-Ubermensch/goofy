@@ -23,6 +23,7 @@ interface BatchBulkActionPanelProps {
   onClearMetadata?: () => void;
   onStartExport: () => void;
   onApplyEnhancements: () => void;
+  onOpenCsvExport?: () => void;
   isProcessing?: boolean;
   isExporting?: boolean;
   activeMetadataCount?: number;
@@ -36,12 +37,20 @@ const COMMON_CARD_PRESETS: Array<{
   gradeTarget: string;
 }> = [
   {
+    name: '2024 AEW Black Diamond',
+    series: 'Upper Deck AEW Black Diamond',
+    year: '2024',
+    setName: 'Event Logo Patches Auto',
+    gradeTarget: 'Near mint or better'
+  },
+  {
     name: '2024 Topps Chrome',
     series: 'Topps Chrome',
     year: '2024',
     setName: 'Base Refractor',
     gradeTarget: 'PSA 10 Gem Mint'
   },
+
   {
     name: '2023-24 Panini Prizm',
     series: 'Panini Prizm',
@@ -85,6 +94,7 @@ export const BatchBulkActionPanel: React.FC<BatchBulkActionPanelProps> = ({
   onClearMetadata,
   onStartExport,
   onApplyEnhancements,
+  onOpenCsvExport,
   isProcessing = false,
   isExporting = false,
   activeMetadataCount = 0
@@ -388,6 +398,20 @@ export const BatchBulkActionPanel: React.FC<BatchBulkActionPanelProps> = ({
                   <Sparkles size={11} />
                   <span>Enhance All</span>
                 </button>
+
+                {onOpenCsvExport && (
+                  <button
+                    id="btn-bulk-panel-open-csv"
+                    type="button"
+                    onClick={onOpenCsvExport}
+                    disabled={totalCards === 0}
+                    className="px-3 py-1.5 rounded bg-emerald-950/80 hover:bg-emerald-900 border border-emerald-500/50 text-emerald-300 text-[11px] font-mono font-bold flex items-center gap-1.5 transition-all disabled:opacity-40"
+                    title="Export queue metadata as structured CSV or eBay File Exchange format"
+                  >
+                    <FileSpreadsheet size={13} />
+                    <span>Export CSV</span>
+                  </button>
+                )}
 
                 <button
                   id="btn-bulk-panel-apply-primary"
